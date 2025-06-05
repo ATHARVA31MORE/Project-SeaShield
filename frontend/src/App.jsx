@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import Login from './pages/Login';
+import Signup from './pages/AuthApp';
 import Home from './pages/Home';
 import EventList from './pages/EventList';
 import Navbar from './components/Navbar';
@@ -47,7 +48,8 @@ function App() {
             )
           }
         />
-        <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
+        
+        <Route path="/login" element={<Signup />}></Route>
         <Route path="*" element={<Navigate to="/" />} />
         <Route path="/checkin" element={user ? <QRScan /> : <Navigate to="/login" />} />
         <Route path="/my-checkins" element={user ? <MyCheckIns /> : <Navigate to="/login" />} />

@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { db } from '../utils/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 import { 
   User, 
   Download, 
@@ -16,28 +19,69 @@ import {
 } from 'lucide-react';
 
 const HomePage = () => {
-  // Mock user data - replace with actual auth context
-  const [user, setUser] = useState({
-    displayName: 'Priya Sharma',
-    userType: 'volunteer',
-    email: 'priya.sharma@email.com',
-    organization: 'Mumbai Beach Warriors'
-  });
-
+  const { user: authUser } = useAuth();
+  const [userData, setUserData] = useState(null);
   const [welcomeMessage, setWelcomeMessage] = useState('');
   const [impactSummary, setImpactSummary] = useState('');
   const [ecoTip, setEcoTip] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Load user data from Firebase
+  useEffect(() => {
+    const loadUserData = async () => {
+      if (!authUser?.uid) return;
+      
+      try {
+        const userRef = doc(db, 'users', authUser.uid);
+        const userSnap = await getDoc(userRef);
+        
+        if (userSnap.exists()) {
+          const firebaseUserData = userSnap.data();
+          setUserData({
+            displayName:
+            authUser.displayName ||
+            (firebaseUserData.firstName && firebaseUserData.lastName
+              ? `${firebaseUserData.firstName} ${firebaseUserData.lastName}`
+              : 'User'),
+            userType: firebaseUserData.userType || 'volunteer',
+            email: authUser.email || firebaseUserData.email,
+            organization: firebaseUserData.organization || 'Mumbai Beach Warriors'
+          });
+        } else {
+          // Fallback to auth user data if no Firestore document exists
+          setUserData({
+            displayName: authUser.displayName || 'User',
+            userType: 'volunteer', // default
+            email: authUser.email,
+            organization: 'Mumbai Beach Warriors'
+          });
+        }
+      } catch (error) {
+        console.error('Error loading user data:', error);
+        // Fallback to auth user data on error
+        setUserData({
+          displayName: authUser.displayName || 'User',
+          userType: 'volunteer',
+          email: authUser.email,
+          organization: 'Mumbai Beach Warriors'
+        });
+      }
+    };
+
+    loadUserData();
+  }, [authUser]);
+
   // Mock Gemini API function - replace with actual API call
   const fetchGeminiResponse = async (prompt) => {
     // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 1000));
     
+    if (!userData) return 'Welcome to Mumbai Beach Cleanup!';
+    
     // Mock responses based on prompt type
     if (prompt.includes('welcome')) {
-      return `Hello ${user.displayName}! 🌊 Welcome back to our Mumbai Beach Cleanup community. As a dedicated ${user.userType}, you're making waves of positive change along our beautiful coastline. Your commitment to environmental conservation is truly inspiring - every piece of plastic you remove makes our beaches cleaner and our marine life safer. Together, we're creating a cleaner, greener Mumbai! 🏖️✨`;
+      return `Hello ${userData.displayName}! 🌊 Welcome back to our Mumbai Beach Cleanup community. As a dedicated ${userData.userType}, you're making waves of positive change along our beautiful coastline. Your commitment to environmental conservation is truly inspiring - every piece of plastic you remove makes our beaches cleaner and our marine life safer. Together, we're creating a cleaner, greener Mumbai! 🏖️✨`;
     }
     
     if (prompt.includes('impact summary')) {
@@ -52,12 +96,14 @@ const HomePage = () => {
   };
 
   const loadContent = async () => {
+    if (!userData) return;
+    
     try {
       setLoading(true);
       
       // Fetch all content in parallel
       const [welcome, impact, tip] = await Promise.all([
-        fetchGeminiResponse(`Generate a personalized welcome message for ${user.displayName}, a ${user.userType} in Mumbai's beach cleanup community. Make it emotionally uplifting and mention their role.`),
+        fetchGeminiResponse(`Generate a personalized welcome message for ${userData.displayName}, a ${userData.userType} in Mumbai's beach cleanup community. Make it emotionally uplifting and mention their role.`),
         fetchGeminiResponse(`Generate an impact summary for Mumbai beach cleanup activities. Include statistics like number of volunteers, weight of waste collected, and beaches cleaned. Make it sound like a friendly official report.`),
         fetchGeminiResponse(`Generate a practical eco tip for beach cleanup volunteers. Include specific advice for environmental conservation activities.`)
       ]);
@@ -68,7 +114,7 @@ const HomePage = () => {
     } catch (error) {
       console.error('Error fetching content:', error);
       // Fallback content
-      setWelcomeMessage(`Welcome back, ${user.displayName}! Ready to make a difference today? 🌊`);
+      setWelcomeMessage(`Welcome back, ${userData?.displayName || 'User'}! Ready to make a difference today? 🌊`);
       setImpactSummary('Our community continues to make incredible impact cleaning Mumbai\'s beaches!');
       setEcoTip('Remember to stay hydrated and wear sun protection during beach cleanups! 🌞');
     } finally {
@@ -83,6 +129,8 @@ const HomePage = () => {
   };
 
   const handlePrint = () => {
+    if (!userData) return;
+    
     // Create a print-friendly version
     const printContent = document.createElement('div');
     printContent.innerHTML = `
@@ -144,9 +192,24 @@ const HomePage = () => {
     alert('PDF download feature would be implemented with html2pdf.js library in production.');
   };
 
+  // Load content when userData is available
   useEffect(() => {
-    loadContent();
-  }, []);
+    if (userData) {
+      loadContent();
+    }
+  }, [userData]);
+
+  // Show loading state while user data is being fetched
+  if (!userData) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50 flex items-center justify-center">
+        <div className="flex items-center justify-center space-x-2">
+          <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          <span className="text-gray-600">Loading your dashboard...</span>
+        </div>
+      </div>
+    );
+  }
 
   const LoadingSpinner = () => (
     <div className="flex items-center justify-center space-x-2">
@@ -156,7 +219,7 @@ const HomePage = () => {
   );
 
   const UserTypeIcon = () => {
-    return user.userType === 'volunteer' ? (
+    return userData.userType === 'volunteer' ? (
       <Heart className="w-5 h-5 text-blue-500" />
     ) : (
       <Building2 className="w-5 h-5 text-green-500" />
@@ -192,8 +255,8 @@ const HomePage = () => {
               <div className="flex items-center space-x-2 px-3 py-2 bg-gray-50 rounded-lg">
                 <UserTypeIcon />
                 <div className="text-sm">
-                  <p className="font-medium text-gray-900">{user.displayName}</p>
-                  <p className="text-gray-600 capitalize">{user.userType}</p>
+                  <p className="font-medium text-gray-900">{userData.displayName}</p>
+                  <p className="text-gray-600 capitalize">{userData.userType}</p>
                 </div>
               </div>
             </div>

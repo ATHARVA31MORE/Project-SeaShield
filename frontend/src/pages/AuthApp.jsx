@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { User, Mail, Lock, Users, Heart, Building2, ArrowRight, Eye, EyeOff } from 'lucide-react';
-import { useNavigate } from 'react-router-dom'; // Add this import
+import { useNavigate } from 'react-router-dom';
 
 // Firebase imports - replace with your actual Firebase utils path
-import { auth, db, googleProvider } from '../utils/firebase'; // Adjust path as needed
+import { auth, db, googleProvider } from '../utils/firebase';
 import { 
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -12,7 +12,7 @@ import {
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 
 const AuthApp = () => {
-  const navigate = useNavigate(); // Add this hook
+  const navigate = useNavigate();
   const [currentPage, setCurrentPage] = useState('login');
   const [formData, setFormData] = useState({
     email: '',
@@ -29,20 +29,22 @@ const AuthApp = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
+  // Use useCallback to prevent function recreation and input focus loss
   const handleInputChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
-    setError('');
-  };
+  const { name, value } = e.target;
+  setFormData(prev => ({
+    ...prev,
+    [name]: value
+  }));
+  setError('');
+};
 
   const handleUserTypeChange = (type) => {
-    setFormData({
-      ...formData,
-      userType: type
-    });
-  };
+  setFormData(prev => ({
+    ...prev,
+    userType: type
+  }));
+};
 
   const validateForm = () => {
     if (!formData.email || !formData.password) {
@@ -73,22 +75,29 @@ const AuthApp = () => {
   };
 
   const saveUserData = async (user, userType, additionalData = {}) => {
-    try {
-      const userData = {
-        uid: user.uid,
-        email: user.email,
-        userType: userType,
-        createdAt: new Date().toISOString(),
-        ...additionalData
-      };
+  try {
+    const fullName = additionalData.displayName ||
+      (additionalData.firstName && additionalData.lastName
+        ? `${additionalData.firstName} ${additionalData.lastName}`
+        : 'User');
 
-      await setDoc(doc(db, 'users', user.uid), userData);
-      console.log('User data saved to Firestore');
-    } catch (error) {
-      console.error('Error saving user data:', error);
-      throw error;
-    }
-  };
+    const userData = {
+      uid: user.uid,
+      email: user.email,
+      userType: userType,
+      createdAt: new Date().toISOString(),
+      displayName: fullName,
+      ...additionalData
+    };
+
+    await setDoc(doc(db, 'users', user.uid), userData);
+    console.log('User data saved to Firestore');
+  } catch (error) {
+    console.error('Error saving user data:', error);
+    throw error;
+  }
+};
+
 
   const handleEmailSignIn = async (e) => {
     e.preventDefault();
@@ -116,7 +125,7 @@ const AuthApp = () => {
         // Redirect to home page after successful login
         setTimeout(() => {
           navigate('/home');
-        }, 1000); // Small delay to show success message
+        }, 1000);
       } else {
         setError('User profile not found. Please sign up first.');
       }
@@ -178,7 +187,7 @@ const AuthApp = () => {
       // Redirect to home page after successful signup
       setTimeout(() => {
         navigate('/home');
-      }, 1000); // Small delay to show success message
+      }, 1000);
     } catch (error) {
       console.error('Sign up error:', error);
       if (error.code === 'auth/email-already-in-use') {
@@ -199,27 +208,46 @@ const AuthApp = () => {
     setLoading(true);
     setError('');
 
+    // Validate form fields before launching Google popup
+    if (currentPage === 'signup') {
+      if (!formData.firstName || !formData.lastName) {
+        setError('Please enter your full name before continuing with Google');
+        setLoading(false);
+        return;
+      }
+      if (formData.userType === 'organizer' && !formData.organization) {
+        setError('Organization name is required for organizers before signing up with Google');
+        setLoading(false);
+        return;
+      }
+    }
+
     try {
+      // Note: Removed localStorage usage as it's not supported in Claude artifacts
+      // Instead, we'll preserve the form data in component state
+      //const pendingFormData = { ...formData };
+
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
 
-      // Check if user exists in Firestore
+      // Check if user already exists
       const userDoc = await getDoc(doc(db, 'users', user.uid));
       
       if (userDoc.exists()) {
-        // Existing user - sign in
+        // Existing user
         const userData = userDoc.data();
         setSuccess(`Welcome back, ${userData.userType}!`);
         console.log('Existing user signed in:', userData);
-        
-        // Redirect to home page after successful login
+
+        // Restore form data
+        //setFormData(prev => ({ ...prev, ...pendingFormData }));
+
         setTimeout(() => {
           navigate('/home');
-        }, 1000); // Small delay to show success message
+        }, 1000);
       } else {
-        // New user - need to set user type
+        // New user flow (signing up)
         if (currentPage === 'signup') {
-          // We're on signup page, so we know the user type
           const additionalData = {
             displayName: user.displayName || `${formData.firstName} ${formData.lastName}`,
             firstName: formData.firstName || user.displayName?.split(' ')[0] || '',
@@ -232,13 +260,14 @@ const AuthApp = () => {
 
           await saveUserData(user, formData.userType, additionalData);
           setSuccess(`Account created successfully as ${formData.userType}!`);
-          
-          // Redirect to home page after successful signup
+
+          // Restore form data
+          setFormData(prev => ({ ...prev, ...pendingFormData }));
+
           setTimeout(() => {
             navigate('/home');
-          }, 1000); // Small delay to show success message
+          }, 1000);
         } else {
-          // We're on login page but user doesn't exist
           setError('Account not found. Please sign up first.');
         }
       }

@@ -100,6 +100,10 @@ export default function EventList() {
                           <span>👥</span>
                           <span>{participantCount} participants</span>
                         </div>
+                        <div className="flex items-center gap-1">
+                          <span>♻️</span>
+                          <span>{event.wasteTarget || 0} kg waste target</span>
+                        </div>
                       </div>
 
                       {/* Status Badge */}

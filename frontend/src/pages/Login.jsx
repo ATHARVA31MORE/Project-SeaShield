@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { auth, db, googleProvider } from '../utils/firebase';
 import { 
   signInWithPopup, 
@@ -6,9 +7,10 @@ import {
   createUserWithEmailAndPassword 
 } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { useNavigate } from 'react-router-dom';
 
 export default function Login() {
+  const navigate = useNavigate();
+  
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -19,7 +21,6 @@ export default function Login() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const navigate = useNavigate();
 
   const validateForm = () => {
     if (!email || !password) {
@@ -56,14 +57,25 @@ export default function Login() {
         email: user.email,
         userType: userType,
         createdAt: new Date().toISOString(),
+        ecoScore: 0,
+        totalCheckIns: 0,
         ...additionalData
       };
 
       await setDoc(doc(db, 'users', user.uid), userData);
       console.log('User data saved to Firestore');
+      return userData;
     } catch (error) {
       console.error('Error saving user data:', error);
       throw error;
+    }
+  };
+
+  const navigateBasedOnUserType = (userType) => {
+    if (userType === 'organizer') {
+      navigate('/organiser');
+    } else {
+      navigate('/volunteer-dashboard');
     }
   };
 
@@ -77,12 +89,14 @@ export default function Login() {
     try {
       const userCred = await signInWithEmailAndPassword(auth, email, password);
       const docSnap = await getDoc(doc(db, 'users', userCred.user.uid));
-      
+
       if (docSnap.exists()) {
+        const userData = docSnap.data();
         console.log('User logged in successfully');
-        navigate('/');
+        navigateBasedOnUserType(userData.userType);
       } else {
         setError('User profile not found. Please sign up first.');
+        await auth.signOut(); // Sign out if no profile exists
       }
     } catch (err) {
       console.error('Login error:', err);
@@ -92,6 +106,8 @@ export default function Login() {
         setError('Incorrect password');
       } else if (err.code === 'auth/invalid-email') {
         setError('Invalid email address');
+      } else if (err.code === 'auth/too-many-requests') {
+        setError('Too many failed attempts. Try again later.');
       } else {
         setError('Login failed: ' + err.message);
       }
@@ -123,7 +139,7 @@ export default function Login() {
 
       await saveUserData(user, userType, additionalData);
       console.log('Account created successfully');
-      navigate('/');
+      navigateBasedOnUserType(userType);
     } catch (err) {
       console.error('Sign up error:', err);
       if (err.code === 'auth/email-already-in-use') {
@@ -165,8 +181,9 @@ export default function Login() {
       
       if (userDoc.exists()) {
         // Existing user - login
+        const userData = userDoc.data();
         console.log('User logged in with Google');
-        navigate('/');
+        navigateBasedOnUserType(userData.userType);
       } else {
         // New user
         if (isSignUp) {
@@ -183,9 +200,10 @@ export default function Login() {
 
           await saveUserData(user, userType, additionalData);
           console.log('Account created with Google');
-          navigate('/');
+          navigateBasedOnUserType(userType);
         } else {
           // Login flow but user doesn't exist
+          await auth.signOut(); // Sign out if trying to login without account
           setError('Account not found. Please sign up first.');
         }
       }
@@ -201,6 +219,22 @@ export default function Login() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const resetForm = () => {
+    setEmail('');
+    setPassword('');
+    setConfirmPassword('');
+    setFirstName('');
+    setLastName('');
+    setOrganization('');
+    setUserType('volunteer');
+    setError('');
+  };
+
+  const toggleMode = () => {
+    setIsSignUp(!isSignUp);
+    resetForm();
   };
 
   return (
@@ -227,7 +261,7 @@ export default function Login() {
                 <button
                   type="button"
                   onClick={() => setUserType('volunteer')}
-                  className={`p-3 rounded-lg border-2 text-sm ${
+                  className={`p-3 rounded-lg border-2 text-sm transition-all ${
                     userType === 'volunteer'
                       ? 'border-blue-500 bg-blue-50 text-blue-700'
                       : 'border-gray-200 hover:border-gray-300'
@@ -238,7 +272,7 @@ export default function Login() {
                 <button
                   type="button"
                   onClick={() => setUserType('organizer')}
-                  className={`p-3 rounded-lg border-2 text-sm ${
+                  className={`p-3 rounded-lg border-2 text-sm transition-all ${
                     userType === 'organizer'
                       ? 'border-green-500 bg-green-50 text-green-700'
                       : 'border-gray-200 hover:border-gray-300'
@@ -312,7 +346,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+            className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
           >
             {loading ? (
               <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
@@ -335,7 +369,7 @@ export default function Login() {
           <button
             onClick={handleGoogleAuth}
             disabled={loading}
-            className="mt-4 w-full bg-red-500 text-white p-3 rounded-lg hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+            className="mt-4 w-full bg-red-500 text-white p-3 rounded-lg hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
           >
             {loading ? (
               <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
@@ -348,10 +382,7 @@ export default function Login() {
         <p className="text-center text-gray-600 mt-6">
           {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
           <button
-            onClick={() => {
-              setIsSignUp(!isSignUp);
-              setError('');
-            }}
+            onClick={toggleMode}
             className="text-blue-600 hover:text-blue-700 font-medium"
           >
             {isSignUp ? 'Sign in' : 'Sign up'}

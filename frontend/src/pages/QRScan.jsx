@@ -175,11 +175,15 @@ export default function QRScan() {
       // 1. Verify event exists and get current data
       const eventDoc = await getDoc(doc(db, 'events', eventId.trim()));
       if (!eventDoc.exists()) {
-        throw new Error('Event not found. Please check the event ID.');
+        alert('Event not found.');
+        return;
       }
 
       const eventData = eventDoc.data();
-      console.log('🔍 EVENT DATA FROM FIRESTORE:', eventData);
+      if (eventData.status === 'cancelled') {
+        alert('This event has been cancelled by the organizer.');
+        return;
+      }
       
       setEventDetails(eventData);
 

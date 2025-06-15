@@ -28,9 +28,10 @@ import {
   Target,
   Zap
 } from 'lucide-react';
-import { collection, getDocs, addDoc, doc, getDoc, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, doc, getDoc, deleteDoc, query, where, updateDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../utils/firebase';
+import { writeBatch, increment } from 'firebase/firestore';
 
 const OrganizerDashboard = () => {
   // Authentication states
@@ -159,11 +160,7 @@ const OrganizerDashboard = () => {
     { title: 'Waste Collected', value: '2.3T', icon: Award, color: 'bg-orange-500' }
   ];
 
-  const upcomingEvents = [
-    { id: 1, name: 'Juhu Beach Cleanup', date: '2025-06-18', volunteers: 45, status: 'Published' },
-    { id: 2, name: 'Marine Drive Initiative', date: '2025-06-22', volunteers: 32, status: 'Draft' },
-    { id: 3, name: 'Versova Beach Drive', date: '2025-06-25', volunteers: 67, status: 'Published' }
-  ];
+    
 
   const TabButton = ({ id, label, icon: Icon, active, onClick }) => (
     <button
@@ -246,6 +243,25 @@ const OrganizerDashboard = () => {
     </div>
   );
 
+  const cancelEvent = async (eventId, reason) => {
+    try {
+      await updateDoc(doc(db, 'events', eventId), {
+        status: 'cancelled',
+        cancelledAt: new Date().toISOString(),
+        cancelReason: reason || 'Event cancelled by organizer'
+      });
+      
+      alert('Event cancelled successfully');
+      // Refresh the events list
+      const snapshot = await getDocs(collection(db, 'events'));
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setEvents(data);
+    } catch (error) {
+      console.error('Error cancelling event:', error);
+      alert('Failed to cancel event');
+    }
+  };
+
   const renderDashboard = () => (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
@@ -269,7 +285,7 @@ const OrganizerDashboard = () => {
         <div className="bg-white rounded-xl p-6 shadow-lg">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Upcoming Events</h2>
           <div className="space-y-4">
-            {upcomingEvents.map(event => (
+            {events.map(event => (
               <EventCard key={event.id} event={event} />
             ))}
           </div>
@@ -278,15 +294,24 @@ const OrganizerDashboard = () => {
         <div className="bg-white rounded-xl p-6 shadow-lg">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Quick Actions</h2>
           <div className="grid grid-cols-2 gap-4">
-            <button className="flex flex-col items-center p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors">
+            <button 
+              onClick={() => setShowAIModal(true)}
+              className="flex flex-col items-center p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+            >
               <Bot className="text-blue-600 mb-2" size={24} />
               <span className="text-sm font-medium text-blue-800">AI Assistant</span>
             </button>
-            <button className="flex flex-col items-center p-4 bg-green-50 rounded-lg hover:bg-green-100 transition-colors">
+            <button 
+              onClick={() => setActiveTab('analytics')}
+              className="flex flex-col items-center p-4 bg-green-50 rounded-lg hover:bg-green-100 transition-colors"
+            >
               <BarChart3 className="text-green-600 mb-2" size={24} />
               <span className="text-sm font-medium text-green-800">Analytics</span>
             </button>
-            <button className="flex flex-col items-center p-4 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors">
+            <button 
+              onClick={() => setActiveTab('messaging')}
+              className="flex flex-col items-center p-4 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors"
+            >
               <Mail className="text-purple-600 mb-2" size={24} />
               <span className="text-sm font-medium text-purple-800">Send Messages</span>
             </button>
@@ -302,59 +327,54 @@ const OrganizerDashboard = () => {
 
   const renderEventManagement = () => {
     const handleCreateEvent = async () => {
-  if (!newEvent.title || !newEvent.date || !newEvent.time || !newEvent.location || !newEvent.wasteTarget) return;
+      if (!newEvent.title || !newEvent.date || !newEvent.time || !newEvent.location || !newEvent.wasteTarget) return;
 
-  try {
-    await addDoc(collection(db, 'events'), {
-      ...newEvent,
-      wasteTarget: Number(newEvent.wasteTarget), // Ensure it's stored as number
-      createdAt: new Date().toISOString(),
-      organizerId: user.uid
-    });
+      try {
+        await addDoc(collection(db, 'events'), {
+          ...newEvent,
+          wasteTarget: Number(newEvent.wasteTarget), // Ensure it's stored as number
+          createdAt: new Date().toISOString(),
+          organizerId: user.uid
+        });
 
-    setModalOpen(false);
-    setNewEvent({ title: '', date: '', time: '', gearNeeded: '', location: '', wasteTarget: '' });
-  } catch (error) {
-    console.error('Error creating event:', error);
-  }
-};
+        setModalOpen(false);
+        setNewEvent({ title: '', date: '', time: '', gearNeeded: '', location: '', wasteTarget: '' });
+      } catch (error) {
+        console.error('Error creating event:', error);
+      }
+    };
 
-const handleDeleteEvent = async (eventId, eventDate) => {
-  // Check if event is upcoming
-  const today = new Date();
-  const eventDateObj = new Date(eventDate);
-  
-  if (eventDateObj <= today) {
-    alert('Cannot delete past or ongoing events');
-    return;
-  }
+    const deleteEventWithCleanup = async (eventId) => {
+      const checkinsQuery = query(collection(db, 'checkins'), where('eventId', '==', eventId));
+      const checkinsSnapshot = await getDocs(checkinsQuery);
+      
+      const batch = writeBatch(db);
+      checkinsSnapshot.forEach((docSnap) => {
+        const checkinData = docSnap.data();
+        batch.delete(docSnap.ref);
+        const userRef = doc(db, 'users', checkinData.userId);
+        batch.update(userRef, {
+          ecoScore: increment(-10),
+          totalCheckIns: increment(-1)
+        });
+      });
 
-  if (window.confirm('Are you sure you want to delete this event? This action cannot be undone.')) {
-    try {
-      await deleteDoc(doc(db, 'events', eventId));
-      // Refresh events list
-      const snapshot = await getDocs(collection(db, 'events'));
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setEvents(data);
-    } catch (error) {
-      console.error('Error deleting event:', error);
-      alert('Error deleting event. Please try again.');
-    }
-  }
-};
+      batch.delete(doc(db, 'events', eventId));
+      await batch.commit();
+    };
 
-const getEventStatus = (eventDate) => {
-  const today = new Date();
-  const eventDateObj = new Date(eventDate);
-  
-  if (eventDateObj < today) {
-    return 'past';
-  } else if (eventDateObj.toDateString() === today.toDateString()) {
-    return 'today';
-  } else {
-    return 'upcoming';
-  }
-};
+    const getEventStatus = (eventDate) => {
+      const today = new Date();
+      const eventDateObj = new Date(eventDate);
+      
+      if (eventDateObj < today) {
+        return 'past';
+      } else if (eventDateObj.toDateString() === today.toDateString()) {
+        return 'today';
+      } else {
+        return 'upcoming';
+      }
+    };
 
     return (
       <div className="p-6">
@@ -369,49 +389,68 @@ const getEventStatus = (eventDate) => {
         </div>
 
         <ul className="space-y-4">
-  {events.map(ev => {
-    const eventStatus = getEventStatus(ev.date);
-    
-    return (
-      <li key={ev.id} className="p-4 bg-white rounded shadow">
-        <div className="flex justify-between items-start">
-          <div className="flex-1">
-            <h3 className="text-lg font-bold">{ev.title}</h3>
-            <p className="text-sm text-gray-500">{ev.date} @ {ev.time} — {ev.location}</p>
-            <p className="text-sm mt-1">Gear: {ev.gearNeeded || 'Standard Kit'}</p>
-            <p className="text-sm mt-1">Target: {ev.wasteTarget || 0} kg waste</p>
+          {events.map(ev => {
+            const eventStatus = getEventStatus(ev.date);
             
-            {/* Status Badge */}
-            <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium mt-2 ${
-              eventStatus === 'past' ? 'bg-gray-100 text-gray-600' :
-              eventStatus === 'today' ? 'bg-green-100 text-green-700' :
-              'bg-blue-100 text-blue-700'
-            }`}>
-              {eventStatus === 'past' ? '✅ Completed' :
-               eventStatus === 'today' ? '🔥 Today' :
-               '📅 Upcoming'}
-            </span>
-          </div>
-          
-          {/* Delete Button - Only for upcoming events */}
-          {eventStatus === 'upcoming' && (
-            <button
-              onClick={() => handleDeleteEvent(ev.id, ev.date)}
-              className="ml-4 px-3 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors flex items-center"
-              title="Delete Event"
-            >
-              <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-              Delete
-            </button>
-          )}
-        </div>
-      </li>
-    );
-  })}
-  {events.length === 0 && <p className="text-gray-500">No events yet.</p>}
-</ul>
+            return (
+              <li
+  key={ev.id}
+  className={`p-4 rounded shadow ${
+    ev.status === 'cancelled' ? 'bg-gray-100 opacity-70 border border-gray-300' : 'bg-white'
+  }`}
+>
+  <div className="flex justify-between items-start">
+    <div className="flex-1">
+      <h3 className="text-lg font-bold">{ev.title}</h3>
+      <p className="text-sm text-gray-500">
+        {ev.date} @ {ev.time} — {ev.location}
+      </p>
+      <p className="text-sm mt-1">Gear: {ev.gearNeeded || 'Standard Kit'}</p>
+      <p className="text-sm mt-1">Target: {ev.wasteTarget || 0} kg waste</p>
+
+      {/* Status Badge */}
+      <span
+        className={`inline-block px-2 py-1 rounded-full text-xs font-medium mt-2 ${
+          ev.status === 'cancelled'
+            ? 'bg-red-100 text-red-700'
+            : eventStatus === 'past'
+            ? 'bg-gray-100 text-gray-600'
+            : eventStatus === 'today'
+            ? 'bg-green-100 text-green-700'
+            : 'bg-blue-100 text-blue-700'
+        }`}
+      >
+        {ev.status === 'cancelled'
+          ? '❌ Cancelled'
+          : eventStatus === 'past'
+          ? '✅ Completed'
+          : eventStatus === 'today'
+          ? '🔥 Today'
+          : '📅 Upcoming'}
+      </span>
+    </div>
+
+    {/* Cancel Button — only if event is not cancelled */}
+    {ev.status !== 'cancelled' && eventStatus === 'upcoming' && (
+      <button
+        onClick={() => {
+          const reason = prompt('Reason for cancellation (optional):');
+          if (confirm('Are you sure you want to cancel this event?')) {
+            cancelEvent(ev.id, reason);
+          }
+        }}
+        className="bg-red-500 text-white px-3 py-1 rounded text-sm"
+      >
+        Cancel Event
+      </button>
+    )}
+  </div>
+</li>
+
+            );
+          })}
+          {events.length === 0 && <p className="text-gray-500">No events yet.</p>}
+        </ul>
 
         {modalOpen && (
           <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
@@ -552,300 +591,134 @@ const getEventStatus = (eventDate) => {
             </ul>
           </div>
         </div>
+        <button 
+          onClick={() => setShowAIModal(true)}
+          className="mt-6 bg-gradient-to-r from-blue-500 to-purple-600 text-white px-8 py-3 rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all shadow-lg"
+        >
+          Start Chat with Claude
+        </button>
       </div>
     </div>
   );
 
   const renderAnalytics = () => (
     <div className="space-y-8">
-      <h1 className="text-3xl font-bold text-gray-900">Analytics & Insights</h1>
+      <h1 className="text-3xl font-bold text-gray-900">Analytics & Reports</h1>
       
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white rounded-xl p-6 shadow-lg">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-gray-900">Total Impact</h3>
-            <TrendingUp className="text-green-500" size={24} />
-          </div>
-          <p className="text-3xl font-bold text-green-600">2.3 Tons</p>
-          <p className="text-sm text-gray-600">Waste collected this year</p>
-        </div>
-        <div className="bg-white rounded-xl p-6 shadow-lg">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-gray-900">Volunteer Growth</h3>
-            <Users className="text-blue-500" size={24} />
-          </div>
-          <p className="text-3xl font-bold text-blue-600">+34%</p>
-          <p className="text-sm text-gray-600">Increase in last 3 months</p>
-        </div>
-        <div className="bg-white rounded-xl p-6 shadow-lg">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-gray-900">Event Success</h3>
-            <Award className="text-purple-500" size={24} />
-          </div>
-          <p className="text-3xl font-bold text-purple-600">94%</p>
-          <p className="text-sm text-gray-600">Average attendance rate</p>
-        </div>
-        <div className="bg-white rounded-xl p-6 shadow-lg">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-gray-900">Beach Coverage</h3>
-            <MapPin className="text-orange-500" size={24} />
-          </div>
-          <p className="text-3xl font-bold text-orange-600">15</p>
-          <p className="text-sm text-gray-600">Beaches cleaned regularly</p>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-xl p-6 shadow-lg">
-        <h2 className="text-xl font-semibold text-gray-900 mb-4">AI-Powered Insights</h2>
-        <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-6">
-          <div className="flex items-start space-x-4">
-            <Bot className="text-blue-600 mt-1" size={24} />
-            <div>
-              <h3 className="font-semibold text-gray-900 mb-2">Claude's Recommendations</h3>
-              <ul className="space-y-2 text-gray-700">
-                <li>• <strong>Juhu Beach</strong> shows 25% reduction in plastic waste - consider expanding events here</li>
-                <li>• <strong>Weekend events</strong> have 40% higher attendance than weekdays</li>
-                <li>• <strong>Monsoon season</strong> approaching - plan indoor backup activities</li>
-                <li>• <strong>Corporate partnerships</strong> could increase volunteer base by 60%</li>
-              </ul>
-            </div>
-          </div>
-        </div>
+        {stats.map((stat, index) => (
+          <StatCard key={index} stat={stat} />
+        ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="bg-white rounded-xl p-6 shadow-lg">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Top Performing Beaches</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">Event Performance</h2>
           <div className="space-y-4">
-            {['Juhu Beach', 'Marine Drive', 'Versova Beach'].map((beach, index) => (
-              <div key={beach} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                <span className="font-medium">{beach}</span>
-                <span className="text-green-600 font-semibold">{(85 - index * 5)}% clean</span>
-              </div>
-            ))}
+            <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
+              <span className="font-medium">Average Volunteers per Event</span>
+              <span className="text-2xl font-bold text-blue-600">48</span>
+            </div>
+            <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
+              <span className="font-medium">Completion Rate</span>
+              <span className="text-2xl font-bold text-green-600">94%</span>
+            </div>
+            <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
+              <span className="font-medium">Average Waste Collected</span>
+              <span className="text-2xl font-bold text-purple-600">150kg</span>
+            </div>
           </div>
         </div>
 
         <div className="bg-white rounded-xl p-6 shadow-lg">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Export Options</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">Recent Activity</h2>
           <div className="space-y-3">
-            <button className="w-full flex items-center justify-center space-x-2 bg-green-50 text-green-700 py-3 px-4 rounded-lg hover:bg-green-100 transition-colors">
-              <Download size={20} />
-              <span>Export CSV Report</span>
-            </button>
-            <button className="w-full flex items-center justify-center space-x-2 bg-blue-50 text-blue-700 py-3 px-4 rounded-lg hover:bg-blue-100 transition-colors">
-              <FileText size={20} />
-              <span>Generate PDF Summary</span>
-            </button>
-            <button className="w-full flex items-center justify-center space-x-2 bg-purple-50 text-purple-700 py-3 px-4 rounded-lg hover:bg-purple-100 transition-colors">
-              <Share2 size={20} />
-              <span>Share Dashboard</span>
-            </button>
+            <div className="flex items-center space-x-3 p-3 bg-blue-50 rounded-lg">
+              <Calendar className="text-blue-600" size={20} />
+              <span className="text-sm">New event created: Marine Drive Cleanup</span>
+            </div>
+            <div className="flex items-center space-x-3 p-3 bg-green-50 rounded-lg">
+              <Users className="text-green-600" size={20} />
+              <span className="text-sm">23 new volunteer registrations</span>
+            </div>
+            <div className="flex items-center space-x-3 p-3 bg-purple-50 rounded-lg">
+              <Award className="text-purple-600" size={20} />
+              <span className="text-sm">Juhu Beach event completed successfully</span>
+            </div>
           </div>
         </div>
       </div>
     </div>
   );
 
-  const tabs = [
-    { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
-    { id: 'events', label: 'Event Management', icon: Calendar },
-    { id: 'ai-tools', label: 'AI Tools', icon: Bot },
-    { id: 'analytics', label: 'Analytics', icon: TrendingUp },
-    { id: 'volunteers', label: 'Volunteers', icon: Users },
-    { id: 'messages', label: 'Communications', icon: MessageSquare },
-    { id: 'settings', label: 'Settings', icon: Settings }
-  ];
-
-  // Logout handler
-  const handleLogout = async () => {
-    try {
-      await auth.signOut();
-      window.location.href = '/login';
-    } catch (error) {
-      console.error('Error logging out:', error);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center space-x-4">
-              <div className="bg-gradient-to-r from-blue-500 to-purple-600 p-2 rounded-lg">
-                <Zap className="text-white" size={24} />
-              </div>
-              <h1 className="text-xl font-bold text-gray-900">Seashield Organizer</h1>
-            </div>
-            <div className="flex items-center space-x-4">
-              <button className="relative p-2 text-gray-400 hover:text-gray-600">
-                <Bell size={20} />
-                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">3</span>
-              </button>
-              <div className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full"></div>
-                <button 
-                  onClick={handleLogout}
-                  className="text-sm text-gray-600 hover:text-gray-900 px-3 py-1 rounded-lg hover:bg-gray-100"
-                >
-                  Logout
-                </button>
-              </div>
-            </div>
+  const renderMessaging = () => (
+    <div className="space-y-8">
+      <h1 className="text-3xl font-bold text-gray-900">Communication Center</h1>
+      
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="bg-white rounded-xl p-6 shadow-lg">
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">Send Notification</h2>
+          <div className="space-y-4">
+            <select className="w-full p-3 border border-gray-300 rounded-lg">
+              <option>Select Event</option>
+              <option>Juhu Beach Cleanup</option>
+              <option>Marine Drive Initiative</option>
+              <option>Versova Beach Drive</option>
+            </select>
+            <input 
+              type="text" 
+              placeholder="Subject"
+              className="w-full p-3 border border-gray-300 rounded-lg"
+            />
+            <textarea 
+              placeholder="Message content..."
+              rows="4"
+              className="w-full p-3 border border-gray-300 rounded-lg"
+            ></textarea>
+            <button className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors">
+              Send Message
+            </button>
           </div>
         </div>
-      </header>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex flex-col lg:flex-row gap-8">
-          {/* Sidebar */}
-          <div className="lg:w-64 flex-shrink-0">
-            <nav className="space-y-2">
-              {tabs.map(tab => (
-                <TabButton
-                  key={tab.id}
-                  id={tab.id}
-                  label={tab.label}
-                  icon={tab.icon}
-                  active={activeTab === tab.id}
-                  onClick={setActiveTab}
-                />
-              ))}
-            </nav>
-          </div>
-
-          {/* Main Content */}
-          <div className="flex-1">
-            {activeTab === 'dashboard' && renderDashboard()}
-            {activeTab === 'events' && renderEventManagement()}
-            {activeTab === 'ai-tools' && renderAITools()}
-            {activeTab === 'analytics' && renderAnalytics()}
-            {activeTab === 'volunteers' && <VolunteerManagement />}
-            {activeTab === 'messages' && (
-                <div className="bg-white rounded-xl p-8 shadow-lg text-center">
-                <MessageSquare className="mx-auto mb-4 text-gray-400" size={48} />
-                <h2 className="text-2xl font-semibold text-gray-900 mb-2">Communications Hub</h2>
-                <p className="text-gray-600">Send AI-generated messages to volunteers and stakeholders</p>
-                </div>
-            )}
-            {activeTab === 'settings' && (
-                <div className="bg-white rounded-xl p-8 shadow-lg text-center">
-                <Settings className="mx-auto mb-4 text-gray-400" size={48} />
-                <h2 className="text-2xl font-semibold text-gray-900 mb-2">Organization Settings</h2>
-                <p className="text-gray-600">Configure your organization profile and preferences</p>
-                </div>
-            )}
+        <div className="bg-white rounded-xl p-6 shadow-lg">
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">Message Templates</h2>
+          <div className="space-y-4">
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <p className="text-sm text-gray-700 font-medium mb-1">Volunteer Reminder</p>
+              <p className="text-sm text-gray-600">"Hi [Name], just a reminder about your upcoming beach cleanup event on [Date] at [Location]. See you there! 🌊"</p>
             </div>
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <p className="text-sm text-gray-700 font-medium mb-1">Event Cancellation</p>
+              <p className="text-sm text-gray-600">"We regret to inform you that the event [Event Name] scheduled on [Date] has been cancelled due to unforeseen circumstances. Thank you for your understanding."</p>
+            </div>
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <p className="text-sm text-gray-700 font-medium mb-1">Thank You Message</p>
+              <p className="text-sm text-gray-600">"Thank you for making a difference! 🌍 Your contribution to the [Event Name] helped clean up [X kg] of waste. Together we create impact!"</p>
+            </div>
+          </div>
         </div>
       </div>
+    </div>
+  );
 
-      {/* Modals */}
-      {showEventModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Create New Event</h2>
-            <p className="text-gray-600 mb-4">Use Claude AI to help you create the perfect beach cleanup event.</p>
-            <div className="flex space-x-3">
-              <button 
-                onClick={() => setShowEventModal(false)}
-                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                Cancel
-              </button>
-              <button className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all">
-                Start with AI
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+  return (
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="flex space-x-4 mb-6">
+        <TabButton id="dashboard" label="Dashboard" icon={Zap} active={activeTab === 'dashboard'} onClick={setActiveTab} />
+        <TabButton id="eventManagement" label="Manage Events" icon={Calendar} active={activeTab === 'eventManagement'} onClick={setActiveTab} />
+        <TabButton id="analytics" label="Analytics" icon={BarChart3} active={activeTab === 'analytics'} onClick={setActiveTab} />
+        <TabButton id="messaging" label="Messaging" icon={Mail} active={activeTab === 'messaging'} onClick={setActiveTab} />
+        <TabButton id="ai" label="AI Tools" icon={Wand2} active={activeTab === 'ai'} onClick={setActiveTab} />
+      </div>
 
-      {showAIModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full">
-            <div className="flex items-center mb-4">
-              <Bot className="text-blue-600 mr-3" size={24} />
-              <h2 className="text-xl font-semibold text-gray-900">AI Assistant</h2>
-            </div>
-            <p className="text-gray-600 mb-4">Claude is ready to help! What would you like to generate or analyze?</p>
-            <div className="flex space-x-3">
-              <button 
-                onClick={() => setShowAIModal(false)}
-                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                Cancel
-              </button>
-              <button className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all">
-                Let's Go!
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {activeTab === 'dashboard' && renderDashboard()}
+      {activeTab === 'eventManagement' && renderEventManagement()}
+      {activeTab === 'analytics' && renderAnalytics()}
+      {activeTab === 'messaging' && renderMessaging()}
+      {activeTab === 'ai' && renderAITools()}
     </div>
   );
 };
-
-function VolunteerManagement() {
-  const [volunteers, setVolunteers] = useState([]);
-  const [search, setSearch] = useState('');
-
-  useEffect(() => {
-    const fetchVolunteers = async () => {
-      const snapshot = await getDocs(collection(db, 'users'));
-      const filtered = snapshot.docs
-        .map(doc => doc.data())
-        .filter(user => user.userType === 'volunteer');
-      setVolunteers(filtered);
-    };
-    fetchVolunteers();
-  }, []);
-
-  const filteredVolunteers = volunteers.filter(v =>
-    v.displayName?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  return (
-    <div className="p-4">
-      <input
-        className="w-full p-2 mb-4 border border-gray-300 rounded"
-        type="text"
-        placeholder="Search volunteers..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-      />
-      <div className="overflow-auto max-h-[60vh]">
-        <table className="w-full table-auto border text-sm">
-          <thead className="bg-gray-100 sticky top-0">
-            <tr>
-              <th className="px-3 py-2 text-left">Name</th>
-              <th className="px-3 py-2 text-left">Email</th>
-              <th className="px-3 py-2 text-left">EcoScore</th>
-              <th className="px-3 py-2 text-left">Check-Ins</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredVolunteers.map((v, i) => (
-              <tr key={i} className="border-t">
-                <td className="px-3 py-2">{v.displayName || `${v.firstName} ${v.lastName}`}</td>
-                <td className="px-3 py-2">{v.email}</td>
-                <td className="px-3 py-2">{v.ecoScore || 0}</td>
-                <td className="px-3 py-2">{v.totalCheckIns || 0}</td>
-              </tr>
-            ))}
-            {filteredVolunteers.length === 0 && (
-              <tr>
-                <td colSpan="4" className="px-3 py-4 text-center text-gray-500">No volunteers found</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
 
 export default OrganizerDashboard;

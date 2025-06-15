@@ -6,32 +6,38 @@ const mockEvents = [
   {
     title: "Juhu Beach Cleanup",
     description: "Join us to clear plastic waste and protect marine life!",
-    date: "2025-06-15", // Changed to future date
+    date: "2025-06-15",
     location: "Juhu Beach, Mumbai",
-    wasteTarget: 80, // ✅ Ensure this is a NUMBER, not string
-    wasteAvailable: 80, // ✅ Add this line
+    wasteTarget: 80,
+    wasteAvailable: 80,        // ✅ Confirmed
     participantCount: 0,
-    status: 'active' // ✅ Initialize participant count
+    status: 'active',          // ✅ Confirmed
+    cancelledAt: null,
+    cancelReason: null,
   },
   {
     title: "Versova Shoreline Sweep",
     description: "Help restore the beauty of Versova Beach.",
     date: "2025-06-18",
     location: "Versova Beach, Mumbai",
-    wasteTarget: 30, // ✅ NUMBER
-    wasteAvailable: 30, // ✅ Add this line
+    wasteTarget: 30,
+    wasteAvailable: 30,
     participantCount: 0,
     status: 'active',
+    cancelledAt: null,
+    cancelReason: null,
   },
   {
     title: "Dadar Eco Dive",
     description: "Let's make Dadar Beach cleaner together.",
     date: "2025-06-22",
     location: "Dadar Beach, Mumbai",
-    wasteTarget: 20, // ✅ NUMBER
-    wasteAvailable: 20, // ✅ Add this line
+    wasteTarget: 20,
+    wasteAvailable: 20,
     participantCount: 0,
     status: 'active',
+    cancelledAt: null,
+    cancelReason: null,
   }
 ];
 

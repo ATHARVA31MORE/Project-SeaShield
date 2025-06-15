@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { db } from '../utils/firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import QRCode from 'react-qr-code';
+import { onSnapshot } from 'firebase/firestore';
+
 
 export default function EventList() {
   const [events, setEvents] = useState([]);
@@ -9,8 +11,9 @@ export default function EventList() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadEventsAndCheckIns();
-  }, []);
+  loadEventsAndCheckIns();  // Load with check-in counts
+}, []);
+
 
   const loadEventsAndCheckIns = async () => {
     try {
@@ -19,7 +22,7 @@ export default function EventList() {
       const eventsList = eventsSnapshot.docs.map(doc => ({ 
         id: doc.id, 
         ...doc.data() 
-      }));
+      })).filter(event => event.status !== 'cancelled');
 
       // Load check-in counts for each event
       const counts = {};

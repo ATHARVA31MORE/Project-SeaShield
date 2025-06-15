@@ -1,7 +1,7 @@
 import { useAuth } from '../context/AuthContext';
 import { useEffect, useState } from 'react';
 import { db } from '../utils/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, deleteDoc } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 
 export default function VolunteerDashboard() {
@@ -16,8 +16,23 @@ export default function VolunteerDashboard() {
         const userDoc = await getDoc(doc(db, 'users', user.uid));
         if (userDoc.exists()) {
           const data = userDoc.data();
+
+          const checkinsQuery = query(collection(db, 'checkins'), where('userId', '==', user.uid));
+          const checkinsSnapshot = await getDocs(checkinsQuery);
+
+          let validCheckIns = 0;
+          for (const checkinDoc of checkinsSnapshot.docs) {
+            const checkinData = checkinDoc.data();
+            const eventSnap = await getDoc(doc(db, 'events', checkinData.eventId));
+            if (eventSnap.exists()) {
+              validCheckIns++;
+            } else {
+              await deleteDoc(checkinDoc.ref); // cleanup
+            }
+          }
+
           setEcoScore(data.ecoScore || 0);
-          setCheckInCount(data.totalCheckIns || 0);
+          setCheckInCount(validCheckIns);
         }
       } catch (e) {
         console.error('Error loading volunteer data:', e);
@@ -25,6 +40,7 @@ export default function VolunteerDashboard() {
         setLoading(false);
       }
     };
+
     loadUserData();
   }, [user.uid]);
 

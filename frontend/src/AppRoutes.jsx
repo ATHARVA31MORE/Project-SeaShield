@@ -12,6 +12,7 @@ import { useState, useEffect } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from './utils/firebase';
 import Profile from './pages/Profile';
+import Messages from './pages/Messages';
 
 function AppRoutes() {
   const { user, loading } = useAuth();
@@ -140,6 +141,7 @@ function AppRoutes() {
     )
   }
 />
+<Route path="/messages" element={<Messages />} />
 
       
       {/* Protected routes accessible by both user types */}

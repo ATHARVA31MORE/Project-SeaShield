@@ -31,7 +31,7 @@ import {
   X
 } from 'lucide-react';
 import { collection, getDocs, addDoc, doc, getDoc, deleteDoc, query, where, updateDoc, orderBy, Timestamp } from 'firebase/firestore';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { db, auth } from '../utils/firebase';
 import { writeBatch, increment } from 'firebase/firestore';
 
@@ -108,6 +108,15 @@ const Organizer = () => {
       fetchAllData();
     }
   }, [modalOpen, user]);
+
+  const handleLogout = async () => {
+  try {
+    await signOut(auth);
+    // User will be automatically redirected due to the auth state listener
+  } catch (error) {
+    console.error('Error signing out:', error);
+  }
+};
 
   const fetchAllData = async () => {
     try {
@@ -1028,17 +1037,18 @@ Examples of content I can help with:
               <h1 className="text-xl font-bold text-gray-900">BeachGuard Organizer</h1>
             </div>
             <div className="flex items-center space-x-4">
-              <div className="relative">
-                <Bell className="text-gray-400 hover:text-gray-600 cursor-pointer" size={20} />
-                {notifications.length > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center">
-                    {notifications.length}
-                  </span>
-                )}
-              </div>
-              <div className="text-sm text-gray-600">
-                Welcome, {user?.email}
-              </div>
+              
+              <div className="flex items-center space-x-4">
+  <div className="text-sm text-gray-600">
+    Welcome, {user?.email}
+  </div>
+  <button
+    onClick={handleLogout}
+    className="text-sm text-red-600 hover:text-red-800 font-medium"
+  >
+    Logout
+  </button>
+</div>
             </div>
           </div>
         </div>

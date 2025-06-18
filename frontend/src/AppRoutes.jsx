@@ -1,15 +1,19 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import Login from './pages/Login';
-import Home from './pages/Home';
 import EventList from './pages/EventList';
 import Navbar from './components/Navbar';
 import QRScan from './pages/QRScan';
 import MyCheckIns from './pages/MyCheckIns';
 import VolunteerDashboard from './pages/VolunteerDashboard';
-import Organiser from './pages/Organiser';
+import OrganiserLayout from './pages/organiser/OrganiserLayout';
+import Dashboard from './pages/organiser/Dashboard';
+import Events from './pages/organiser/Events';
+import Analytics from './pages/organiser/Analytics';
+import Messaging from './pages/organiser/Messaging';
+import ContentTemplates from './pages/organiser/ContentTemplates';
 import { useState, useEffect } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from './utils/firebase';
 import Profile from './pages/Profile';
 import Messages from './pages/Messages';
@@ -18,8 +22,11 @@ function AppRoutes() {
   const { user, loading } = useAuth();
   const [userType, setUserType] = useState(null);
   const [userDataLoading, setUserDataLoading] = useState(false);
+  const [events, setEvents] = useState([]);
+  const [volunteers, setVolunteers] = useState([]);
+  const [checkins, setCheckins] = useState([]);
+  const [notifications, setNotifications] = useState([]);
 
-  // Fetch user type when user is authenticated
   useEffect(() => {
     const fetchUserType = async () => {
       if (user && !userType) {
@@ -31,11 +38,11 @@ function AppRoutes() {
             setUserType(userData?.userType || 'volunteer');
           } else {
             console.log('No user document found');
-            setUserType('volunteer'); // fallback
+            setUserType('volunteer');
           }
         } catch (error) {
           console.error('Error fetching user type:', error);
-          setUserType('volunteer'); // fallback
+          setUserType('volunteer');
         } finally {
           setUserDataLoading(false);
         }
@@ -45,15 +52,67 @@ function AppRoutes() {
       }
     };
 
+    const fetchOrganizerData = async () => {
+      if (user && userType === 'organizer') {
+        try {
+          const [eventSnap, volunteerSnap, checkinSnap, notificationSnap] = await Promise.all([
+            getDocs(collection(db, 'events')),
+            getDocs(query(collection(db, 'users'), where('userType', '==', 'volunteer'))),
+            getDocs(collection(db, 'checkins')),
+            getDocs(collection(db, 'notifications'))
+          ]);
+
+          const eventsData = eventSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          const volunteersData = volunteerSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          const checkinsData = checkinSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          const notificationsData = notificationSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+          setEvents(eventsData);
+          setVolunteers(volunteersData);
+          setCheckins(checkinsData);
+          setNotifications(notificationsData);
+        } catch (error) {
+          console.error('Error fetching organizer data:', error);
+        }
+      }
+    };
+
     if (!loading) {
       fetchUserType();
     }
+    if (user && userType === 'organizer') {
+      fetchOrganizerData();
+    }
   }, [user, loading, userType]);
 
-  // Calculate if we're still loading (must be before early return)
+  // Function to refresh all data
+  const refreshOrganizerData = async () => {
+    if (user && userType === 'organizer') {
+      try {
+        const [eventSnap, volunteerSnap, checkinSnap, notificationSnap] = await Promise.all([
+          getDocs(collection(db, 'events')),
+          getDocs(query(collection(db, 'users'), where('userType', '==', 'volunteer'))),
+          getDocs(collection(db, 'checkins')),
+          getDocs(collection(db, 'notifications'))
+        ]);
+
+        const eventsData = eventSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const volunteersData = volunteerSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const checkinsData = checkinSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const notificationsData = notificationSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+        setEvents(eventsData);
+        setVolunteers(volunteersData);
+        setCheckins(checkinsData);
+        setNotifications(notificationsData);
+      } catch (error) {
+        console.error('Error refreshing organizer data:', error);
+      }
+    }
+  };
+
   const isLoading = loading || (user && userDataLoading);
 
-  // Show loading while auth is loading or user data is being fetched
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -67,7 +126,6 @@ function AppRoutes() {
 
   return (
     <Routes>
-      {/* Root route - redirect based on auth status */}
       <Route 
         path="/" 
         element={
@@ -80,8 +138,7 @@ function AppRoutes() {
           )
         } 
       />
-      
-      {/* Login route - only accessible when not authenticated */}
+
       <Route 
         path="/login" 
         element={
@@ -94,57 +151,117 @@ function AppRoutes() {
           )
         } 
       />
-      
-      {/* Organizer routes - only accessible by organizers */}
+
       <Route 
         path="/organiser" 
         element={
           user ? (
             userType === 'organizer' ? 
-              <Organiser /> : 
+              <OrganiserLayout 
+                events={events}
+                volunteers={volunteers}
+                checkins={checkins}
+                notifications={notifications}
+                refreshData={refreshOrganizerData}
+              /> : 
               <Navigate to="/volunteer-dashboard" replace />
           ) : (
             <Navigate to="/login" replace />
           )
         } 
+      >
+        <Route 
+          index 
+          element={
+            <Dashboard 
+              events={events} 
+              volunteers={volunteers} 
+              checkins={checkins} 
+              refreshData={refreshOrganizerData}
+            />
+          } 
+        />
+        <Route 
+          path="events" 
+          element={
+            <Events 
+              events={events}
+              checkins={checkins}
+              volunteers={volunteers}
+              user={user}
+              refreshData={refreshOrganizerData}
+            />
+          } 
+        />
+        <Route 
+          path="analytics" 
+          element={
+            <Analytics 
+              events={events} 
+              volunteers={volunteers} 
+              checkins={checkins}
+            />
+          } 
+        />
+        <Route 
+          path="messaging" 
+          element={
+            <Messaging 
+              events={events} 
+              volunteers={volunteers}
+              checkins={checkins}
+              notifications={notifications}
+              user={user}
+              refreshData={refreshOrganizerData}
+            />
+          } 
+        />
+        <Route 
+          path="templates" 
+          element={
+            <ContentTemplates 
+              events={events}
+              volunteers={volunteers}
+              checkins={checkins}
+            />
+          } 
+        />
+      </Route>
+
+      <Route 
+        path="/volunteer-dashboard" 
+        element={
+          user ? (
+            userType === 'volunteer' ? 
+              <>
+                <Navbar />
+                <VolunteerDashboard />
+              </> : 
+              <Navigate to="/organiser" replace />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
       />
-      
-      {/* Volunteer routes - only accessible by volunteers */}
-<Route 
-  path="/volunteer-dashboard" 
-  element={
-    user ? (
-      userType === 'volunteer' ? 
-        <>
-          <Navbar />
-          <VolunteerDashboard />
-        </> : 
-        <Navigate to="/organiser" replace />
-    ) : (
-      <Navigate to="/login" replace />
-    )
-  }
-/>
 
-<Route 
-  path="/profile" 
-  element={
-    user ? (
-      userType === 'volunteer' ? 
-        <>
-          <Navbar />
-          <Profile />
-        </> : 
-        <Navigate to="/organiser" replace />
-    ) : (
-      <Navigate to="/login" replace />
-    )
-  }
-/>
-<Route path="/messages" element={<Messages />} />
+      <Route 
+        path="/profile" 
+        element={
+          user ? (
+            userType === 'volunteer' ? 
+              <>
+                <Navbar />
+                <Profile />
+              </> : 
+              <Navigate to="/organiser" replace />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
 
-      
-      {/* Protected routes accessible by both user types */}
+      <Route path="/messages" element={<Messages />} />
+
       <Route 
         path="/events" 
         element={
@@ -158,7 +275,7 @@ function AppRoutes() {
           )
         } 
       />
-      
+
       <Route 
         path="/checkin" 
         element={
@@ -172,7 +289,7 @@ function AppRoutes() {
           )
         } 
       />
-      
+
       <Route 
         path="/my-checkins" 
         element={
@@ -186,22 +303,9 @@ function AppRoutes() {
           )
         } 
       />
+
       
-      <Route 
-        path="/home" 
-        element={
-          user ? (
-            <>
-              <Navbar />
-              <Home />
-            </>
-          ) : (
-            <Navigate to="/login" replace />
-          )
-        } 
-      />
-      
-      {/* Catch all route */}
+
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

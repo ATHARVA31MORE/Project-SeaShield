@@ -4,6 +4,7 @@ import { db } from '../../utils/firebase';
 
 const Events = ({ events, checkins, fetchAllData, user }) => {
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingEvent, setEditingEvent] = useState(null); // Add this state
   const [newEvent, setNewEvent] = useState({
     title: '',
     date: '',
@@ -14,19 +15,21 @@ const Events = ({ events, checkins, fetchAllData, user }) => {
   });
 
   const cancelEvent = async (eventId, reason) => {
-    try {
-      await updateDoc(doc(db, 'events', eventId), {
-        status: 'cancelled',
-        cancelledAt: new Date().toISOString(),
-        cancelReason: reason || 'Event cancelled by organizer'
-      });
-      alert('Event cancelled successfully');
-      fetchAllData();
-    } catch (error) {
-      console.error('Error cancelling event:', error);
-      alert('Failed to cancel event');
+  try {
+    await updateDoc(doc(db, 'events', eventId), {
+      status: 'cancelled',
+      cancelReason: reason || '',
+      cancelledAt: new Date().toISOString()
+    });
+    alert('Event cancelled successfully!');
+    if (typeof fetchAllData === 'function') {
+      await fetchAllData();
     }
-  };
+  } catch (error) {
+    console.error('Error cancelling event:', error);
+    alert('Failed to cancel event');
+  }
+};
 
   const getEventStatus = (eventDate) => {
     const today = new Date();
@@ -37,53 +40,104 @@ const Events = ({ events, checkins, fetchAllData, user }) => {
   };
 
   const handleCreateEvent = async () => {
-    if (!newEvent.title || !newEvent.date || !newEvent.time || !newEvent.location || !newEvent.wasteTarget) {
-      alert('Please fill in all required fields');
-      return;
-    }
-    
-    try {
+  if (!newEvent.title || !newEvent.date || !newEvent.time || !newEvent.location || !newEvent.wasteTarget) {
+    alert('Please fill in all required fields');
+    return;
+  }
+
+  try {
+    if (editingEvent) {
+      // Update existing event
+      await updateDoc(doc(db, 'events', editingEvent.id), {
+        ...newEvent,
+        wasteTarget: Number(newEvent.wasteTarget),
+        updatedAt: new Date().toISOString(),
+      });
+      alert('Event updated successfully!');
+    } else {
+      // Create new event
       await addDoc(collection(db, 'events'), {
         ...newEvent,
         wasteTarget: Number(newEvent.wasteTarget),
         createdAt: new Date().toISOString(),
         organizerId: user?.uid,
-        status: 'active'
+        status: 'active',
       });
-      setModalOpen(false);
-      setNewEvent({ title: '', date: '', time: '', gearNeeded: '', location: '', wasteTarget: '' });
-      fetchAllData();
       alert('Event created successfully!');
-    } catch (error) {
-      console.error('Error creating event:', error);
-      alert('Failed to create event');
     }
-  };
+
+    setModalOpen(false);
+    setEditingEvent(null);
+    setNewEvent({ title: '', date: '', time: '', gearNeeded: '', location: '', wasteTarget: '' });
+
+    if (typeof fetchAllData === 'function') {
+      await fetchAllData(); // ✅ Safe call with await
+    }
+  } catch (error) {
+    console.error('Error saving event:', error);
+    alert('Failed to save event');
+  }
+};
+
 
   const deleteEventWithCleanup = async (eventId) => {
-    try {
-      const checkinsQuery = query(collection(db, 'checkins'), where('eventId', '==', eventId));
-      const checkinsSnapshot = await getDocs(checkinsQuery);
-      const batch = writeBatch(db);
-      
-      checkinsSnapshot.forEach((docSnap) => {
-        const checkinData = docSnap.data();
-        batch.delete(docSnap.ref);
-        const userRef = doc(db, 'users', checkinData.userId);
-        batch.update(userRef, {
-          ecoScore: increment(-10),
-          totalCheckIns: increment(-1)
-        });
+  try {
+    const checkinsQuery = query(collection(db, 'checkins'), where('eventId', '==', eventId));
+    const checkinsSnapshot = await getDocs(checkinsQuery);
+    const batch = writeBatch(db);
+
+    checkinsSnapshot.forEach((docSnap) => {
+      const checkinData = docSnap.data();
+      batch.delete(docSnap.ref);
+      const userRef = doc(db, 'users', checkinData.userId);
+      batch.update(userRef, {
+        ecoScore: increment(-10),
+        totalCheckIns: increment(-1)
       });
-      
-      batch.delete(doc(db, 'events', eventId));
-      await batch.commit();
-      fetchAllData();
-      alert('Event deleted successfully');
-    } catch (error) {
-      console.error('Error deleting event:', error);
-      alert('Failed to delete event');
+    });
+
+    batch.delete(doc(db, 'events', eventId));
+    await batch.commit();
+
+    if (typeof fetchAllData === 'function') {
+      await fetchAllData();  // ✅ Safe check added
     }
+
+    alert('Event deleted successfully');
+  } catch (error) {
+    console.error('Error deleting event:', error);
+    alert('Failed to delete event');
+  }
+};
+
+  const handleEdit = (event) => {
+    setEditingEvent(event);
+    setNewEvent({
+      title: event.title,
+      date: event.date,
+      time: event.time,
+      gearNeeded: event.gearNeeded || '',
+      location: event.location,
+      wasteTarget: event.wasteTarget.toString()
+    });
+    setModalOpen(true);
+  };
+
+  const handleView = (event) => {
+    console.log('Viewing event:', event);
+    // e.g., navigate(`/organiser/events/${event.id}`) if routing
+  };
+
+  const handleShare = (event) => {
+    const url = `${window.location.origin}/volunteer/events/${event.id}`;
+    navigator.clipboard.writeText(url);
+    alert('Event link copied to clipboard!');
+  };
+
+  const handleCloseModal = () => {
+    setModalOpen(false);
+    setEditingEvent(null);
+    setNewEvent({ title: '', date: '', time: '', gearNeeded: '', location: '', wasteTarget: '' });
   };
 
   return (
@@ -102,7 +156,7 @@ const Events = ({ events, checkins, fetchAllData, user }) => {
         {events && events.length > 0 ? events.map(event => {
           const eventStatus = getEventStatus(event.date);
           const volunteerCount = checkins?.filter(checkin => checkin.eventId === event.id).length || 0;
-          
+
           return (
             <div
               key={event.id}
@@ -153,8 +207,30 @@ const Events = ({ events, checkins, fetchAllData, user }) => {
                       ? '🔥 Today'
                       : '📅 Upcoming'}
                   </span>
+
+                  {/* Action buttons */}
+                  <div className="flex gap-3 mt-5">
+                    <button
+                      onClick={() => handleEdit(event)}
+                      className="text-sm px-4 py-2 rounded-lg bg-blue-100 text-blue-700 hover:bg-blue-200"
+                    >
+                      ✏️ Edit
+                    </button>
+                    <button
+                      onClick={() => handleView(event)}
+                      className="text-sm px-4 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    >
+                      👁️ View
+                    </button>
+                    <button
+                      onClick={() => handleShare(event)}
+                      className="text-sm px-4 py-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200"
+                    >
+                      🔗 Share
+                    </button>
+                  </div>
                 </div>
-                
+
                 <div className="flex flex-col space-y-2">
                   {event.status !== 'cancelled' && eventStatus === 'upcoming' && (
                     <button
@@ -169,7 +245,7 @@ const Events = ({ events, checkins, fetchAllData, user }) => {
                       Cancel Event
                     </button>
                   )}
-                  
+
                   <button
                     onClick={() => {
                       if (confirm('Are you sure you want to delete this event? This will also remove all associated check-ins.')) {
@@ -195,7 +271,9 @@ const Events = ({ events, checkins, fetchAllData, user }) => {
       {modalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-xl mx-4">
-            <h3 className="text-xl font-semibold mb-6 text-gray-900">Create New Event</h3>
+            <h3 className="text-xl font-semibold mb-6 text-gray-900">
+              {editingEvent ? 'Edit Event' : 'Create New Event'}
+            </h3>
             
             <div className="space-y-4">
               <input
@@ -247,10 +325,10 @@ const Events = ({ events, checkins, fetchAllData, user }) => {
                 onClick={handleCreateEvent}
                 className="flex-1 bg-gradient-to-r from-blue-500 to-purple-600 text-white py-3 rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all font-medium"
               >
-                Create Event
+                {editingEvent ? 'Update Event' : 'Create Event'}
               </button>
               <button
-                onClick={() => setModalOpen(false)}
+                onClick={handleCloseModal}
                 className="flex-1 bg-gray-500 text-white py-3 rounded-lg hover:bg-gray-600 transition-colors font-medium"
               >
                 Cancel

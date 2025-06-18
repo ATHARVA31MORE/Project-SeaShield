@@ -2,6 +2,7 @@ import React from 'react';
 import { Calendar, Users, MapPin, Edit3, Eye, Share2, Clock, Target, Wrench } from 'lucide-react';
 
 const EventCard = ({ event, checkins, onEdit, onView, onShare, compact = false }) => {
+    
   // Get unique volunteer count for this event
   const volunteerCount = checkins ? 
     [...new Set(checkins.filter(checkin => checkin.eventId === event.id).map(checkin => checkin.userId))].length : 0;
@@ -40,6 +41,49 @@ const EventCard = ({ event, checkins, onEdit, onView, onShare, compact = false }
     });
   };
 
+  // Default handlers if not provided
+  const handleEdit = (event) => {
+    if (onEdit && typeof onEdit === 'function') {
+      onEdit(event);
+    } else {
+      console.log('Edit function not provided for event:', event.title);
+      // You could show a toast notification or navigate to edit page
+      alert('Edit functionality not implemented yet');
+    }
+  };
+
+  const handleShare = (event) => {
+    if (onShare && typeof onShare === 'function') {
+      onShare(event);
+    } else {
+      console.log('Share function not provided for event:', event.title);
+      // Default share functionality
+      if (navigator.share) {
+        navigator.share({
+          title: event.title,
+          text: `Join us for ${event.title} on ${formatDate(event.date)} at ${event.location}`,
+          url: window.location.href
+        }).catch(console.error);
+      } else {
+        // Fallback for browsers that don't support Web Share API
+        const shareText = `Join us for ${event.title} on ${formatDate(event.date)} at ${event.location}`;
+        navigator.clipboard.writeText(shareText).then(() => {
+          alert('Event details copied to clipboard!');
+        }).catch(() => {
+          alert('Unable to share event details');
+        });
+      }
+    }
+  };
+
+  const handleView = (event) => {
+    if (onView && typeof onView === 'function') {
+      onView(event);
+    } else {
+      console.log('View function not provided for event:', event.title);
+    }
+  };
+
   // Compact version for dashboard
   if (compact) {
     return (
@@ -59,6 +103,21 @@ const EventCard = ({ event, checkins, onEdit, onView, onShare, compact = false }
             <Users size={14} className="mr-2" />
             <span>{volunteerCount} volunteer{volunteerCount !== 1 ? 's' : ''}</span>
           </div>
+        </div>
+        {/* Add action buttons for compact view too */}
+        <div className="flex gap-2 mt-3">
+          <button
+            onClick={() => handleEdit(event)}
+            className="text-xs px-2 py-1 rounded bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors"
+          >
+            ✏️ Edit
+          </button>
+          <button
+            onClick={() => handleShare(event)}
+            className="text-xs px-2 py-1 rounded bg-green-100 text-green-700 hover:bg-green-200 transition-colors"
+          >
+            🔗 Share
+          </button>
         </div>
       </div>
     );
@@ -149,36 +208,29 @@ const EventCard = ({ event, checkins, onEdit, onView, onShare, compact = false }
       </div>
 
       {/* Action Buttons */}
-      <div className="flex flex-wrap gap-2 pt-4 border-t border-gray-200">
-        <button 
-          onClick={() => onEdit && onEdit(event)}
-          className="flex items-center px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors font-medium"
+      <div className="flex gap-3 mt-5">
+        <button
+          onClick={() => handleEdit(event)}
+          className="text-sm px-4 py-2 rounded-lg bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors"
         >
-          <Edit3 size={16} className="mr-2" />
-          Edit
+          ✏️ Edit
         </button>
         
-        <button 
-          onClick={() => onView && onView(event)}
-          className="flex items-center px-4 py-2 bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors font-medium"
+        <button
+          onClick={() => handleShare(event)}
+          className="text-sm px-4 py-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200 transition-colors"
         >
-          <Eye size={16} className="mr-2" />
-          View Details
+          🔗 Share
         </button>
-        
-        <button 
-          onClick={() => onShare && onShare(event)}
-          className="flex items-center px-4 py-2 bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors font-medium"
-        >
-          <Share2 size={16} className="mr-2" />
-          Share
-        </button>
-        
-        {/* Volunteer Count Badge */}
-        <div className="ml-auto flex items-center bg-gray-100 text-gray-700 px-3 py-2 rounded-lg">
-          <Users size={16} className="mr-2" />
-          <span className="font-medium">{volunteerCount}</span>
-        </div>
+
+        {onView && (
+          <button
+            onClick={() => handleView(event)}
+            className="text-sm px-4 py-2 rounded-lg bg-purple-100 text-purple-700 hover:bg-purple-200 transition-colors"
+          >
+            👁️ View
+          </button>
+        )}
       </div>
 
       {/* Cancel/Completion Info */}

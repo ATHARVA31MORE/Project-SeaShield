@@ -41,6 +41,24 @@ const Dashboard = ({ events, checkins, volunteers, setShowEventModal, navigateTo
     }
   };
 
+  const fetchAllData = async () => {
+  await fetchEvents();
+  await fetchCheckins();
+};
+
+  const handleEdit = (event) => {
+  setEditingEvent(event);
+  setShowForm(true);
+};
+
+const handleView = (event) => {
+  alert(`Viewing event: ${event.title}`);
+};
+
+const handleShare = (event) => {
+  alert(`Share link copied for: ${event.title}`);
+};
+
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
@@ -65,7 +83,16 @@ const Dashboard = ({ events, checkins, volunteers, setShowEventModal, navigateTo
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Upcoming Events</h2>
           <div className="space-y-4">
             {dashboardEvents.length > 0 ? dashboardEvents.map(event => (
-              <EventCard key={event.id} event={event} checkins={checkins || []} />
+              <EventCard 
+              key={event.id} 
+              event={event} 
+              checkins={checkins || []} 
+              onEdit={handleEdit} 
+              onView={handleView} 
+              onShare={handleShare} 
+              fetchAllData={fetchAllData}
+            />
+
             )) : (
               <p className="text-gray-500 text-center py-8">No upcoming events</p>
             )}

@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
-import { collection, addDoc, getDocs, query, where, doc, updateDoc, writeBatch, increment } from 'firebase/firestore';
+import React, { useState, useEffect } from 'react';
+import { collection, addDoc, getDocs, query, where, doc, updateDoc, writeBatch, increment, onSnapshot } from 'firebase/firestore';
 import { db } from '../../utils/firebase';
 
-const Events = ({ events, checkins, fetchAllData, user }) => {
+const Events = ({ user }) => {
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingEvent, setEditingEvent] = useState(null); // Add this state
+  const [editingEvent, setEditingEvent] = useState(null);
+  const [events, setEvents] = useState([]);
+  const [checkins, setCheckins] = useState([]);
   const [newEvent, setNewEvent] = useState({
     title: '',
     date: '',
@@ -14,22 +16,51 @@ const Events = ({ events, checkins, fetchAllData, user }) => {
     wasteTarget: ''
   });
 
-  const cancelEvent = async (eventId, reason) => {
-  try {
-    await updateDoc(doc(db, 'events', eventId), {
-      status: 'cancelled',
-      cancelReason: reason || '',
-      cancelledAt: new Date().toISOString()
+  // Real-time listeners
+  useEffect(() => {
+    // Listen to events collection
+    const eventsUnsubscribe = onSnapshot(collection(db, 'events'), (snapshot) => {
+      const eventsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setEvents(eventsData);
+    }, (error) => {
+      console.error('Error listening to events:', error);
     });
-    alert('Event cancelled successfully!');
-    if (typeof fetchAllData === 'function') {
-      await fetchAllData();
+
+    // Listen to checkins collection
+    const checkinsUnsubscribe = onSnapshot(collection(db, 'checkins'), (snapshot) => {
+      const checkinsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setCheckins(checkinsData);
+    }, (error) => {
+      console.error('Error listening to checkins:', error);
+    });
+
+    // Cleanup function
+    return () => {
+      eventsUnsubscribe();
+      checkinsUnsubscribe();
+    };
+  }, []);
+
+  const cancelEvent = async (eventId, reason) => {
+    try {
+      await updateDoc(doc(db, 'events', eventId), {
+        status: 'cancelled',
+        cancelReason: reason || '',
+        cancelledAt: new Date().toISOString()
+      });
+      alert('Event cancelled successfully!');
+      // No need to call fetchAllData - real-time listener will update
+    } catch (error) {
+      console.error('Error cancelling event:', error);
+      alert('Failed to cancel event');
     }
-  } catch (error) {
-    console.error('Error cancelling event:', error);
-    alert('Failed to cancel event');
-  }
-};
+  };
 
   const getEventStatus = (eventDate) => {
     const today = new Date();
@@ -40,75 +71,68 @@ const Events = ({ events, checkins, fetchAllData, user }) => {
   };
 
   const handleCreateEvent = async () => {
-  if (!newEvent.title || !newEvent.date || !newEvent.time || !newEvent.location || !newEvent.wasteTarget) {
-    alert('Please fill in all required fields');
-    return;
-  }
-
-  try {
-    if (editingEvent) {
-      // Update existing event
-      await updateDoc(doc(db, 'events', editingEvent.id), {
-        ...newEvent,
-        wasteTarget: Number(newEvent.wasteTarget),
-        updatedAt: new Date().toISOString(),
-      });
-      alert('Event updated successfully!');
-    } else {
-      // Create new event
-      await addDoc(collection(db, 'events'), {
-        ...newEvent,
-        wasteTarget: Number(newEvent.wasteTarget),
-        createdAt: new Date().toISOString(),
-        organizerId: user?.uid,
-        status: 'active',
-      });
-      alert('Event created successfully!');
+    if (!newEvent.title || !newEvent.date || !newEvent.time || !newEvent.location || !newEvent.wasteTarget) {
+      alert('Please fill in all required fields');
+      return;
     }
 
-    setModalOpen(false);
-    setEditingEvent(null);
-    setNewEvent({ title: '', date: '', time: '', gearNeeded: '', location: '', wasteTarget: '' });
+    try {
+      if (editingEvent) {
+        // Update existing event
+        await updateDoc(doc(db, 'events', editingEvent.id), {
+          ...newEvent,
+          wasteTarget: Number(newEvent.wasteTarget),
+          updatedAt: new Date().toISOString(),
+        });
+        alert('Event updated successfully!');
+      } else {
+        // Create new event
+        await addDoc(collection(db, 'events'), {
+          ...newEvent,
+          wasteTarget: Number(newEvent.wasteTarget),
+          createdAt: new Date().toISOString(),
+          organizerId: user?.uid,
+          status: 'active',
+        });
+        alert('Event created successfully!');
+      }
 
-    if (typeof fetchAllData === 'function') {
-      await fetchAllData(); // ✅ Safe call with await
+      setModalOpen(false);
+      setEditingEvent(null);
+      setNewEvent({ title: '', date: '', time: '', gearNeeded: '', location: '', wasteTarget: '' });
+      // No need to call fetchAllData - real-time listener will update
+    } catch (error) {
+      console.error('Error saving event:', error);
+      alert('Failed to save event');
     }
-  } catch (error) {
-    console.error('Error saving event:', error);
-    alert('Failed to save event');
-  }
-};
-
+  };
 
   const deleteEventWithCleanup = async (eventId) => {
-  try {
-    const checkinsQuery = query(collection(db, 'checkins'), where('eventId', '==', eventId));
-    const checkinsSnapshot = await getDocs(checkinsQuery);
-    const batch = writeBatch(db);
+    try {
+      const checkinsQuery = query(collection(db, 'checkins'), where('eventId', '==', eventId));
+      const checkinsSnapshot = await getDocs(checkinsQuery);
+      const batch = writeBatch(db);
 
-    checkinsSnapshot.forEach((docSnap) => {
-      const checkinData = docSnap.data();
-      batch.delete(docSnap.ref);
-      const userRef = doc(db, 'users', checkinData.userId);
-      batch.update(userRef, {
-        ecoScore: increment(-10),
-        totalCheckIns: increment(-1)
+      checkinsSnapshot.forEach((docSnap) => {
+        const checkinData = docSnap.data();
+        batch.delete(docSnap.ref);
+        const userRef = doc(db, 'users', checkinData.userId);
+        batch.update(userRef, {
+          ecoScore: increment(-10),
+          totalCheckIns: increment(-1)
+        });
       });
-    });
 
-    batch.delete(doc(db, 'events', eventId));
-    await batch.commit();
+      batch.delete(doc(db, 'events', eventId));
+      await batch.commit();
 
-    if (typeof fetchAllData === 'function') {
-      await fetchAllData();  // ✅ Safe check added
+      alert('Event deleted successfully');
+      // No need to call fetchAllData - real-time listener will update
+    } catch (error) {
+      console.error('Error deleting event:', error);
+      alert('Failed to delete event');
     }
-
-    alert('Event deleted successfully');
-  } catch (error) {
-    console.error('Error deleting event:', error);
-    alert('Failed to delete event');
-  }
-};
+  };
 
   const handleEdit = (event) => {
     setEditingEvent(event);

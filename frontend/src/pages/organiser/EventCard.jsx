@@ -104,21 +104,23 @@ const EventCard = ({ event, checkins, onEdit, onView, onShare, compact = false }
             <span>{volunteerCount} volunteer{volunteerCount !== 1 ? 's' : ''}</span>
           </div>
         </div>
-        {/* Add action buttons for compact view too */}
-        <div className="flex gap-2 mt-3">
-          <button
-            onClick={() => handleEdit(event)}
-            className="text-xs px-2 py-1 rounded bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors"
-          >
-            ✏️ Edit
-          </button>
-          <button
-            onClick={() => handleShare(event)}
-            className="text-xs px-2 py-1 rounded bg-green-100 text-green-700 hover:bg-green-200 transition-colors"
-          >
-            🔗 Share
-          </button>
-        </div>
+        {/* Hide action buttons in compact view */}
+{!compact && (
+  <div className="flex gap-2 mt-3">
+    <button
+      onClick={() => handleEdit(event)}
+      className="text-xs px-2 py-1 rounded bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors"
+    >
+      ✏️ Edit
+    </button>
+    <button
+      onClick={() => handleShare(event)}
+      className="text-xs px-2 py-1 rounded bg-green-100 text-green-700 hover:bg-green-200 transition-colors"
+    >
+      🔗 Share
+    </button>
+  </div>
+)}
       </div>
     );
   }

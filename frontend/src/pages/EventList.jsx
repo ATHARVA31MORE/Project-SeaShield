@@ -44,18 +44,22 @@ export default function EventList() {
     }
   };
 
-  const getEventStatus = (eventDate) => {
-    const today = new Date();
-    const eventDateObj = new Date(eventDate);
-    
-    if (eventDateObj < today) {
-      return { status: 'completed', color: 'text-gray-500', bg: 'bg-gray-100' };
-    } else if (eventDateObj.toDateString() === today.toDateString()) {
-      return { status: 'today', color: 'text-green-600', bg: 'bg-green-100' };
-    } else {
-      return { status: 'upcoming', color: 'text-blue-600', bg: 'bg-blue-100' };
-    }
-  };
+  const getEventStatus = (eventDate, eventTime) => {
+  const now = new Date();
+  const start = new Date(`${eventDate}T${eventTime}`);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000); // Add 24 hours
+
+  if (now >= start && now <= end) {
+    return { status: 'ongoing', color: 'text-yellow-700', bg: 'bg-yellow-100' };
+  } else if (now > end) {
+    return { status: 'completed', color: 'text-gray-500', bg: 'bg-gray-100' };
+  } else if (start.toDateString() === now.toDateString()) {
+    return { status: 'today', color: 'text-green-600', bg: 'bg-green-100' };
+  } else {
+    return { status: 'upcoming', color: 'text-blue-600', bg: 'bg-blue-100' };
+  }
+};
+
 
   if (loading) {
     return (
@@ -77,7 +81,7 @@ export default function EventList() {
       ) : (
         <div className="grid gap-6">
           {events.map(event => {
-            const eventStatus = getEventStatus(event.date);
+            const eventStatus = getEventStatus(event.date, event.time);
             const participantCount = checkInCounts[event.id] || 0;
             
             return (
@@ -112,6 +116,7 @@ export default function EventList() {
                       {/* Status Badge */}
                       <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${eventStatus.bg} ${eventStatus.color}`}>
                         {eventStatus.status === 'completed' && '✅ Completed'}
+                        {eventStatus.status === 'ongoing' && '🟡 Ongoing'}
                         {eventStatus.status === 'today' && '🔥 Happening Today'}
                         {eventStatus.status === 'upcoming' && '📅 Upcoming'}
                       </span>

@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { db, storage } from '../utils/firebase';
 import { addDoc, collection, doc, getDoc, updateDoc, increment, query, where, getDocs } from 'firebase/firestore';
-import { uploadBytes, ref, getDownloadURL } from 'firebase/storage';
 import { fetchGeminiResponse } from '../utils/gemini';
-import SeedEvents from '../components/SeedEvents';
+import { uploadBytes, uploadString, ref, getDownloadURL } from 'firebase/storage';
+import axios from 'axios';
 
 export default function QRScan() {
   const { user } = useAuth();
@@ -15,11 +15,9 @@ export default function QRScan() {
   const [eventDetails, setEventDetails] = useState(null);
   const [ecoScore, setEcoScore] = useState(0);
   const [motivationalMessage, setMotivationalMessage] = useState('');
-  const [feedback, setFeedback] = useState('');
-  const [showFeedback, setShowFeedback] = useState(false);
   const [currentCheckInId, setCurrentCheckInId] = useState(null);
 
-  // New state for post-checkin features
+  // Post-checkin features
   const [showProofUpload, setShowProofUpload] = useState(false);
   const [uploadedPhoto, setUploadedPhoto] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -28,6 +26,12 @@ export default function QRScan() {
   const [showEventProgress, setShowEventProgress] = useState(false);
   const [eventProgress, setEventProgress] = useState(null);
   const [originalWasteAmount, setOriginalWasteAmount] = useState(0);
+
+  // Time-based states
+  const [canCheckIn, setCanCheckIn] = useState(true);
+  const [timeMessage, setTimeMessage] = useState('');
+  const [eventHasEnded, setEventHasEnded] = useState(false);
+  const [isAnimating, setIsAnimating] = useState(false);
 
   // Load user's current EcoScore
   useEffect(() => {
@@ -43,6 +47,84 @@ export default function QRScan() {
     };
     loadUserScore();
   }, [user.uid]);
+
+  const uploadToImgBB = async (file) => {
+  const formData = new FormData();
+  formData.append('image', file);
+
+  const res = await axios.post(
+    `https://api.imgbb.com/1/upload?key=${import.meta.env.VITE_IMGBB_API_KEY}`,
+    formData
+  );
+
+  return res.data.data.url; // ← This is the final image URL
+};
+
+  // Updated time restrictions - Only 2 hours before event
+  const checkTimeRestrictions = (eventData) => {
+    const now = new Date();
+    const eventDateTime = new Date(eventData.date + ' ' + eventData.time);
+    const eventEndTime = new Date(eventDateTime.getTime() + (eventData.duration || 4) * 60 * 60 * 1000);
+    const checkInWindowStart = new Date(eventDateTime.getTime() - 2 * 60 * 60 * 1000); // 2 hours before
+
+    console.log('Time Check:', {
+      now: now.toISOString(),
+      eventStart: eventDateTime.toISOString(),
+      eventEnd: eventEndTime.toISOString(),
+      checkInStart: checkInWindowStart.toISOString()
+    });
+
+    // Check if event has ended
+    if (now > eventEndTime) {
+      setEventHasEnded(true);
+      setCanCheckIn(false);
+      setTimeMessage('🕒 Event has ended.');
+      return { canCheckIn: false, hasEnded: true };
+    }
+
+    // Check if it's too early to check in (more than 2 hours before event)
+    if (now < checkInWindowStart) {
+      const msUntilCheckIn = checkInWindowStart - now;
+      const hoursUntilCheckIn = Math.ceil(msUntilCheckIn / (1000 * 60 * 60));
+      const minutesUntilCheckIn = Math.ceil(msUntilCheckIn / (1000 * 60));
+      
+      setCanCheckIn(false);
+      
+      if (hoursUntilCheckIn > 24) {
+        const daysUntilCheckIn = Math.ceil(hoursUntilCheckIn / 24);
+        setTimeMessage(`⏰ Check-in opens 2 hours before the event (in ${daysUntilCheckIn} days)`);
+      } else if (hoursUntilCheckIn > 1) {
+        setTimeMessage(`⏰ Check-in opens 2 hours before the event (in ${hoursUntilCheckIn} hours)`);
+      } else {
+        setTimeMessage(`⏰ Check-in opens in ${minutesUntilCheckIn} minutes`);
+      }
+      
+      return { canCheckIn: false, hasEnded: false };
+    }
+
+    // Check if event is currently active or within check-in window
+    if (now >= checkInWindowStart && now <= eventEndTime) {
+      setCanCheckIn(true);
+      setEventHasEnded(false);
+      
+      if (now < eventDateTime) {
+        const msUntilStart = eventDateTime - now;
+        const hoursUntilStart = Math.ceil(msUntilStart / (1000 * 60 * 60));
+        const minutesUntilStart = Math.ceil(msUntilStart / (1000 * 60));
+        
+        if (hoursUntilStart > 1) {
+          setTimeMessage(`✅ Check-in available! Event starts in ${hoursUntilStart} hours.`);
+        } else {
+          setTimeMessage(`✅ Check-in available! Event starts in ${minutesUntilStart} minutes.`);
+        }
+      } else {
+        setTimeMessage('✅ Event is currently active. Check-in available!');
+      }
+      return { canCheckIn: true, hasEnded: false };
+    }
+
+    return { canCheckIn: false, hasEnded: false };
+  };
 
   const checkDuplicateCheckIn = async (eventId) => {
     const q = query(
@@ -70,7 +152,6 @@ export default function QRScan() {
 
   const loadEventProgress = async (eventId) => {
     try {
-      // Get all check-ins for this event
       const checkInsQuery = query(
         collection(db, 'checkins'),
         where('eventId', '==', eventId)
@@ -91,7 +172,6 @@ export default function QRScan() {
         });
       });
 
-      // Sort participants by waste collected
       participants.sort((a, b) => b.waste - a.waste);
 
       setEventProgress({
@@ -105,34 +185,45 @@ export default function QRScan() {
   };
 
   const handlePhotoUpload = async (file) => {
-    if (!file || !currentCheckInId) return;
+  if (!file || !currentCheckInId) return;
 
-    setIsUploading(true);
-    try {
-      // Create storage reference
-      const fileName = `proof-photos/${currentCheckInId}/${Date.now()}-${file.name}`;
-      const storageRef = ref(storage, fileName);
-
-      // Upload file
-      const snapshot = await uploadBytes(storageRef, file);
-      const downloadURL = await getDownloadURL(snapshot.ref);
-
-      // Save photo reference to checkins document
-      const checkInRef = doc(db, 'checkins', currentCheckInId);
-      await updateDoc(checkInRef, {
-        proofPhoto: downloadURL,
-        photoUploadTime: new Date().toISOString()
-      });
-
-      setUploadedPhoto(downloadURL);
-      setStatus('✅ Proof photo uploaded successfully!');
-    } catch (error) {
-      console.error('Error uploading photo:', error);
-      setStatus('❌ Error uploading photo. Please try again.');
-    } finally {
-      setIsUploading(false);
+  setIsUploading(true);
+  try {
+    // Validate file size (5MB limit)
+    if (file.size > 5 * 1024 * 1024) {
+      setStatus('❌ File size too large. Please choose a file under 5MB.');
+      return;
     }
-  };
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      setStatus('❌ Please select a valid image file.');
+      return;
+    }
+
+    // Upload to ImgBB
+    const photoUrl = await uploadToImgBB(file);
+
+    // Save URL to Firestore
+    const checkInRef = doc(db, 'checkins', currentCheckInId);
+    await updateDoc(checkInRef, {
+      proofPhoto: photoUrl,
+      photoUploadTime: new Date().toISOString()
+    });
+
+    setUploadedPhoto(photoUrl);
+    setStatus('✅ Proof photo uploaded successfully!');
+
+    setIsAnimating(true);
+    setTimeout(() => setIsAnimating(false), 1000);
+
+  } catch (error) {
+    console.error('❌ Upload error:', error);
+    setStatus(`❌ Upload failed. Please try again.`);
+  } finally {
+    setIsUploading(false);
+  }
+};
 
   const submitCustomWaste = async () => {
     if (!customWasteAmount.trim() || !currentCheckInId) return;
@@ -144,7 +235,6 @@ export default function QRScan() {
         return;
       }
 
-      // Update the checkins document
       const checkInRef = doc(db, 'checkins', currentCheckInId);
       await updateDoc(checkInRef, {
         wasteCollected: newWasteAmount,
@@ -156,6 +246,9 @@ export default function QRScan() {
       setShowWasteEntry(false);
       setCustomWasteAmount('');
       setStatus(`✅ Waste collection updated to ${newWasteAmount}kg!`);
+      
+      setIsAnimating(true);
+      setTimeout(() => setIsAnimating(false), 1000);
     } catch (error) {
       console.error('Error updating waste amount:', error);
       setStatus('❌ Error updating waste amount. Please try again.');
@@ -175,19 +268,28 @@ export default function QRScan() {
       // 1. Verify event exists and get current data
       const eventDoc = await getDoc(doc(db, 'events', eventId.trim()));
       if (!eventDoc.exists()) {
-        alert('Event not found.');
+        setStatus('❌ Event not found.');
+        setIsProcessing(false);
         return;
       }
 
       const eventData = eventDoc.data();
       if (eventData.status === 'cancelled') {
-        alert('This event has been cancelled by the organizer.');
+        setStatus('❌ This event has been cancelled by the organizer.');
+        setIsProcessing(false);
         return;
       }
       
       setEventDetails(eventData);
 
-      // 2. Check for duplicate check-in
+      // 2. Check time restrictions
+      const timeCheck = checkTimeRestrictions(eventData);
+      if (!timeCheck.canCheckIn) {
+        setIsProcessing(false);
+        return;
+      }
+
+      // 3. Check for duplicate check-in
       const isDuplicate = await checkDuplicateCheckIn(eventId.trim());
       if (isDuplicate) {
         setStatus('⚠️ You have already checked in to this event!');
@@ -195,7 +297,7 @@ export default function QRScan() {
         return;
       }
 
-      // 3. Get current participant count from existing check-ins (more reliable)
+      // 4. Get current participant count from existing check-ins
       const checkInsQuery = query(
         collection(db, 'checkins'),
         where('eventId', '==', eventId.trim())
@@ -203,38 +305,24 @@ export default function QRScan() {
       const checkInsSnapshot = await getDocs(checkInsQuery);
       const currentParticipants = checkInsSnapshot.size;
       
-      console.log('👥 CURRENT PARTICIPANTS FROM CHECKINS:', currentParticipants);
-      console.log('👥 PARTICIPANT COUNT FROM EVENT:', eventData.participantCount);
-
-      // 4. Calculate waste - DETAILED LOGGING
+      // 5. Calculate waste
       const wasteAvailable = Number(eventData.wasteAvailable) || 0;
-      const totalParticipants = currentParticipants + 1; // Include this new participant
-      
-      console.log('🧮 WASTE CALCULATION:');
-      console.log('  - wasteAvailable:', wasteAvailable, typeof wasteAvailable);
-      console.log('  - currentParticipants:', currentParticipants, typeof currentParticipants);
-      console.log('  - totalParticipants:', totalParticipants, typeof totalParticipants);
+      const totalParticipants = currentParticipants + 1;
       
       let wastePerVolunteer = 0;
       
       if (wasteAvailable > 0 && totalParticipants > 0) {
         wastePerVolunteer = wasteAvailable / totalParticipants;
-        wastePerVolunteer = Math.round(wastePerVolunteer * 100) / 100; // Round to 2 decimal places
-        console.log('  - wastePerVolunteer (calculated):', wastePerVolunteer);
-      } else {
-        console.log('  - ❌ wasteAvailable or totalParticipants is 0');
+        wastePerVolunteer = Math.round(wastePerVolunteer * 100) / 100;
       }
       
-      // Ensure minimum waste collection if event has waste available
       if (wasteAvailable > 0 && wastePerVolunteer < 0.1) {
-        wastePerVolunteer = Math.max(1, wasteAvailable / 10); // Give at least 1kg or 1/10th of total
-        console.log('  - wastePerVolunteer (adjusted minimum):', wastePerVolunteer);
+        wastePerVolunteer = Math.max(1, wasteAvailable / 10);
       }
 
-      console.log('✅ FINAL wasteCollected value:', wastePerVolunteer);
       setOriginalWasteAmount(wastePerVolunteer);
 
-      // 5. Create the check-in document
+      // 6. Create the check-in document
       const checkInData = {
         userId: user.uid,
         userName: user.displayName,
@@ -242,19 +330,15 @@ export default function QRScan() {
         eventId: eventId.trim(),
         eventTitle: eventData.title,
         eventLocation: eventData.location,
-        wasteCollected: wastePerVolunteer,  // This should now be > 0
+        wasteCollected: wastePerVolunteer,
         timestamp: new Date().toISOString(),
         checkInTime: new Date(),
       };
 
-      console.log('📝 CHECK-IN DATA TO BE SAVED:', checkInData);
-
-      // Save to Firestore
       const docRef = await addDoc(collection(db, 'checkins'), checkInData);
-      console.log('✅ CHECK-IN SAVED WITH ID:', docRef.id);
       setCurrentCheckInId(docRef.id);
 
-      // 6. Update user's EcoScore (+10 points)
+      // 7. Update user's EcoScore
       const userRef = doc(db, 'users', user.uid);
       await updateDoc(userRef, {
         ecoScore: increment(10),
@@ -262,24 +346,25 @@ export default function QRScan() {
         totalCheckIns: increment(1)
       });
 
-      // 7. Update event participation count
+      // 8. Update event participation count
       const eventRef = doc(db, 'events', eventId.trim());
       await updateDoc(eventRef, {
         participantCount: increment(1),
         lastCheckIn: new Date().toISOString()
       });
 
-      // 8. Generate motivational message
+      // 9. Generate motivational message
       const message = await generateMotivationalMessage(eventData.title, user.displayName);
       setMotivationalMessage(message);
 
-      // 9. Update local state
+      // 10. Update local state with animation
       setEcoScore(prevScore => prevScore + 10);
       setCheckInSuccess(true);
       setStatus(`✅ Check-in successful! You collected ${wastePerVolunteer}kg of waste 🌊`);
-      setShowFeedback(true);
 
-      // Clear event ID for next scan
+      setIsAnimating(true);
+      setTimeout(() => setIsAnimating(false), 2000);
+
       setEventId('');
 
     } catch (error) {
@@ -290,35 +375,11 @@ export default function QRScan() {
     }
   };
 
-  const submitFeedback = async () => {
-    if (!feedback.trim()) return;
-
-    try {
-      await addDoc(collection(db, 'feedback'), {
-        userId: user.uid,
-        userName: user.displayName,
-        eventId: eventId,
-        eventTitle: eventDetails?.title,
-        feedback: feedback.trim(),
-        timestamp: new Date().toISOString(),
-        rating: 'positive'
-      });
-
-      setFeedback('');
-      setShowFeedback(false);
-      alert('Thank you for your feedback! 🙏');
-    } catch (error) {
-      console.error('Error submitting feedback:', error);
-    }
-  };
-
   const resetCheckIn = () => {
     setCheckInSuccess(false);
     setEventDetails(null);
     setMotivationalMessage('');
     setStatus('');
-    setShowFeedback(false);
-    setFeedback('');
     setCurrentCheckInId(null);
     setShowProofUpload(false);
     setUploadedPhoto(null);
@@ -327,286 +388,309 @@ export default function QRScan() {
     setShowEventProgress(false);
     setEventProgress(null);
     setOriginalWasteAmount(0);
+    setCanCheckIn(true);
+    setTimeMessage('');
+    setEventHasEnded(false);
   };
 
   return (
-    <div className="p-6 max-w-md mx-auto">
-      <h2 className="text-xl font-bold mb-4 text-center">📸 Event Check-In</h2>
-      
-      {/* EcoScore Display */}
-      <div className="bg-green-100 p-3 rounded-lg mb-4 text-center">
-        <div className="text-2xl font-bold text-green-800">🌟 {ecoScore}</div>
-        <div className="text-sm text-green-600">EcoScore Points</div>
-      </div>
-
-      {!checkInSuccess ? (
-        <div>
-          {/* Debug Button - Remove this in production */}
-          <div className="mb-4 p-2 bg-yellow-50 border border-yellow-200 rounded">
-            <p className="text-xs text-yellow-800 mb-2">🐛 Debug Mode: Check browser console for detailed logs</p>
-            <button
-              onClick={() => console.log('Current eventId:', eventId)}
-              className="text-xs bg-yellow-200 px-2 py-1 rounded"
-            >
-              Log Current Event ID
-            </button>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-green-50 to-cyan-50 p-4">
+      <div className="max-w-md mx-auto">
+        {/* Header */}
+        <div className="text-center mb-6">
+          <div className="bg-gradient-to-r from-blue-600 to-green-600 text-white p-6 rounded-2xl shadow-lg transform transition-all duration-500 hover:scale-105">
+            <h2 className="text-2xl font-bold mb-2">📸 Event Check-In</h2>
+            <p className="text-blue-100 text-sm">Scan QR code or enter Event ID</p>
           </div>
-
-          {/* Event ID Input */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Enter Scanned Event ID
-            </label>
-            <input
-              type="text"
-              placeholder="e.g., g3rCfy5NpZn58EGA8xWa"
-              value={eventId}
-              onChange={(e) => setEventId(e.target.value)}
-              className="p-3 border border-gray-300 rounded-lg w-full text-center font-mono"
-              disabled={isProcessing}
-            />
-          </div>
-
-          {/* Check-in Button */}
-          <button
-            onClick={handleCheckIn}
-            disabled={isProcessing || !eventId.trim()}
-            className={`w-full py-3 px-4 rounded-lg font-semibold transition-colors ${
-              isProcessing || !eventId.trim()
-                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                : 'bg-blue-600 hover:bg-blue-700 text-white'
-            }`}
-          >
-            {isProcessing ? '🔄 Processing...' : '✅ Check In to Event'}
-          </button>
-
-          {/* Status Message */}
-          {status && (
-            <div className={`mt-4 p-3 rounded-lg text-center font-medium ${
-              status.includes('✅') 
-                ? 'bg-green-100 text-green-800' 
-                : status.includes('❌') 
-                ? 'bg-red-100 text-red-800'
-                : status.includes('⚠️')
-                ? 'bg-yellow-100 text-yellow-800'
-                : 'bg-blue-100 text-blue-800'
-            }`}>
-              {status}
-            </div>
-          )}
         </div>
-      ) : (
-        /* Success State */
-        <div className="text-center">
-          {/* Success Badge */}
-          <div className="bg-green-500 text-white rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-4">
-            <span className="text-3xl">🎉</span>
+        
+        {/* EcoScore Display */}
+        <div className={`bg-gradient-to-r from-green-400 to-blue-500 p-4 rounded-xl mb-6 text-center shadow-lg transform transition-all duration-1000 ${isAnimating ? 'scale-110 rotate-1' : 'scale-100'}`}>
+          <div className="text-3xl font-bold text-white drop-shadow-lg">🌟 {ecoScore}</div>
+          <div className="text-green-100 font-medium">EcoScore Points</div>
+          <div className="mt-2 h-2 bg-white/20 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-white/50 rounded-full transition-all duration-1000 ease-out"
+              style={{ width: `${Math.min((ecoScore % 100), 100)}%` }}
+            ></div>
           </div>
+        </div>
 
-          {/* Event Details */}
-          {eventDetails && (
-            <div className="bg-blue-50 p-4 rounded-lg mb-4">
-              <h3 className="font-bold text-blue-900">{eventDetails.title}</h3>
-              <p className="text-sm text-blue-700">{eventDetails.location}</p>
-              <div className="mt-2 text-xs text-blue-600">
-                📅 {eventDetails.date} • ✅ Checked in successfully
+        {!checkInSuccess ? (
+          <div className="space-y-6">
+            {/* Event ID Input */}
+            <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
+              <label className="block text-sm font-semibold text-gray-700 mb-3">
+                Enter Scanned Event ID
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="e.g., g3rCfy5NpZn58EGA8xWa"
+                  value={eventId}
+                  onChange={(e) => setEventId(e.target.value)}
+                  className="p-4 border-2 border-gray-200 rounded-xl w-full text-center font-mono text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-300"
+                  disabled={isProcessing}
+                />
+                <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                  {eventId.trim() && <span className="text-green-500">✓</span>}
+                </div>
               </div>
             </div>
-          )}
 
-          {/* Points Earned */}
-          <div className="bg-yellow-100 p-3 rounded-lg mb-4">
-            <div className="text-lg font-bold text-yellow-800">+10 EcoScore Points! 🌟</div>
-            <div className="text-sm text-yellow-700">Total: {ecoScore} points</div>
-          </div>
+            {/* Time restriction message */}
+            {timeMessage && (
+              <div className={`p-4 rounded-xl border-l-4 ${
+                canCheckIn 
+                  ? 'bg-green-50 border-green-500 text-green-800' 
+                  : 'bg-yellow-50 border-yellow-500 text-yellow-800'
+              } animate-fadeIn`}>
+                <div className="font-medium">{timeMessage}</div>
+              </div>
+            )}
 
-          {/* Motivational Message */}
-          {motivationalMessage && (
-            <div className="bg-green-50 p-4 rounded-lg mb-4 text-green-800 italic">
-              {motivationalMessage}
-            </div>
-          )}
-
-          {/* Post Check-in Action Menu */}
-          <div className="grid grid-cols-2 gap-2 mb-4">
+            {/* Check-in Button */}
             <button
-              onClick={() => setShowProofUpload(true)}
-              className="p-3 bg-purple-100 text-purple-800 rounded-lg text-sm font-medium hover:bg-purple-200 transition-colors"
+              onClick={handleCheckIn}
+              disabled={isProcessing || !eventId.trim() || !canCheckIn}
+              className={`w-full py-4 px-6 rounded-xl font-bold text-lg transition-all duration-300 transform ${
+                isProcessing || !eventId.trim() || !canCheckIn
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed scale-95'
+                  : 'bg-gradient-to-r from-blue-600 to-green-600 hover:from-blue-700 hover:to-green-700 text-white shadow-lg hover:shadow-xl hover:scale-105 active:scale-95'
+              }`}
             >
-              📸 Upload Proof
-            </button>
-            <button
-              onClick={() => setShowWasteEntry(true)}  
-              className="p-3 bg-orange-100 text-orange-800 rounded-lg text-sm font-medium hover:bg-orange-200 transition-colors"
-            >
-              ♻️ Log Waste
-            </button>
-            <button
-              onClick={() => {
-                setShowEventProgress(true);
-                loadEventProgress(eventDetails?.id || currentCheckInId);
-              }}
-              className="p-3 bg-indigo-100 text-indigo-800 rounded-lg text-sm font-medium hover:bg-indigo-200 transition-colors"
-            >
-              📊 Event Stats
-            </button>
-            <button
-              onClick={resetCheckIn}
-              className="p-3 bg-blue-100 text-blue-800 rounded-lg text-sm font-medium hover:bg-blue-200 transition-colors"
-            >
-              ➕ Next Event
-            </button>
-          </div>
-
-          {/* Proof Photo Upload Section */}
-          {showProofUpload && (
-            <div className="bg-purple-50 p-4 rounded-lg mb-4 border border-purple-200">
-              <h4 className="font-semibold text-purple-900 mb-3">📸 Upload Cleanup Proof</h4>
-              
-              {!uploadedPhoto ? (
-                <div>
-                  <p className="text-sm text-purple-700 mb-3">
-                    Share a before/after photo or selfie at the cleanup location!
-                  </p>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => e.target.files[0] && handlePhotoUpload(e.target.files[0])}
-                    className="w-full p-2 border border-purple-300 rounded text-sm"
-                    disabled={isUploading}
-                  />
-                  {isUploading && (
-                    <div className="mt-2 text-sm text-purple-600">🔄 Uploading photo...</div>
-                  )}
+              {isProcessing ? (
+                <div className="flex items-center justify-center">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white mr-2"></div>
+                  Processing...
                 </div>
               ) : (
-                <div>
-                  <div className="text-green-600 font-medium mb-2">✅ Photo uploaded successfully!</div>
-                  <img src={uploadedPhoto} alt="Cleanup proof" className="w-full h-32 object-cover rounded" />
-                </div>
+                '✅ Check In to Event'
               )}
-              
-              <button
-                onClick={() => setShowProofUpload(false)}
-                className="mt-3 px-3 py-1 bg-purple-200 text-purple-800 rounded text-sm"
-              >
-                Close
-              </button>
-            </div>
-          )}
+            </button>
 
-          {/* Custom Waste Entry Section */}
-          {showWasteEntry && (
-            <div className="bg-orange-50 p-4 rounded-lg mb-4 border border-orange-200">
-              <h4 className="font-semibold text-orange-900 mb-3">♻️ Manual Waste Entry</h4>
-              <p className="text-sm text-orange-700 mb-3">
-                Current estimate: {originalWasteAmount}kg
-              </p>
-              <p className="text-xs text-orange-600 mb-3">
-                Enter the actual amount you collected (in kg):
-              </p>
-              <input
-                type="number"
-                step="0.1"
-                min="0"
-                placeholder="Enter kg (e.g., 2.5)"
-                value={customWasteAmount}
-                onChange={(e) => setCustomWasteAmount(e.target.value)}
-                className="w-full p-2 border border-orange-300 rounded text-sm mb-3"
-              />
-              <div className="flex gap-2">
-                <button
-                  onClick={submitCustomWaste}
-                  disabled={!customWasteAmount.trim()}
-                  className="px-3 py-1 bg-orange-500 text-white rounded text-sm disabled:bg-orange-300"
-                >
-                  Update Amount
-                </button>
-                <button
-                  onClick={() => setShowWasteEntry(false)}
-                  className="px-3 py-1 bg-orange-200 text-orange-800 rounded text-sm"
-                >
-                  Cancel
-                </button>
+            {/* Status Message */}
+            {status && (
+              <div className={`p-4 rounded-xl font-medium text-center transform transition-all duration-500 animate-slideIn ${
+                status.includes('✅') 
+                  ? 'bg-green-100 text-green-800 border border-green-200' 
+                  : status.includes('❌') 
+                  ? 'bg-red-100 text-red-800 border border-red-200'
+                  : status.includes('⚠️')
+                  ? 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                  : 'bg-blue-100 text-blue-800 border border-blue-200'
+              }`}>
+                {status}
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Success State */
+          <div className="text-center space-y-6">
+            {/* Success Badge */}
+            <div className={`transform transition-all duration-1000 ${isAnimating ? 'scale-125 rotate-12' : 'scale-100'}`}>
+              <div className="bg-gradient-to-r from-green-400 to-blue-500 text-white rounded-full w-24 h-24 flex items-center justify-center mx-auto shadow-xl">
+                <span className="text-4xl animate-bounce">🎉</span>
               </div>
             </div>
-          )}
 
-          {/* Event Progress Section */}
-          {showEventProgress && (
-            <div className="bg-indigo-50 p-4 rounded-lg mb-4 border border-indigo-200">
-              <h4 className="font-semibold text-indigo-900 mb-3">📊 Event Progress</h4>
+            {/* Event Details Card */}
+            {eventDetails && (
+              <div className="bg-white p-6 rounded-xl shadow-lg border border-blue-100 animate-slideIn">
+                <h3 className="font-bold text-xl text-blue-900 mb-2">{eventDetails.title}</h3>
+                <p className="text-blue-700 mb-2">📍 {eventDetails.location}</p>
+                <div className="text-sm text-blue-600 bg-blue-50 p-2 rounded">
+                  📅 {eventDetails.date} • ✅ Successfully checked in!
+                </div>
+              </div>
+            )}
+
+            {/* Points Earned */}
+            <div className={`bg-gradient-to-r from-yellow-400 to-orange-500 p-4 rounded-xl shadow-lg transform transition-all duration-1000 ${isAnimating ? 'scale-110 rotate-1' : 'scale-100'}`}>
+              <div className="text-2xl font-bold text-white">+10 EcoScore Points! 🌟</div>
+              <div className="text-yellow-100">Total: {ecoScore} points</div>
+            </div>
+
+            {/* Motivational Message */}
+            {motivationalMessage && (
+              <div className="bg-gradient-to-r from-green-100 to-blue-100 p-4 rounded-xl border border-green-200 animate-fadeIn">
+                <div className="text-green-800 italic font-medium">{motivationalMessage}</div>
+              </div>
+            )}
+
+            {/* Info Message about Feedback */}
+            <div className="bg-blue-50 p-4 rounded-xl border border-blue-200">
+              <div className="text-blue-800 font-medium mb-1">💬 Want to give feedback?</div>
+              <div className="text-blue-600 text-sm">
+                Visit the "My Event Participation" tab to provide feedback for this event whenever you're ready!
+              </div>
+            </div>
+
+            {/* Action Grid */}
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => setShowProofUpload(true)}
+                className="p-4 bg-purple-100 text-purple-800 rounded-xl font-medium hover:bg-purple-200 transition-all duration-300 transform hover:scale-105 hover:shadow-lg active:scale-95"
+              >
+                <div className="text-xl mb-1">📸</div>
+                <div className="text-sm">Upload Proof</div>
+              </button>
               
-              {eventProgress ? (
-                <div>
-                  <div className="grid grid-cols-2 gap-4 mb-4">
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-indigo-800">{eventProgress.totalParticipants}</div>
-                      <div className="text-xs text-indigo-600">Participants</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-indigo-800">{eventProgress.totalWaste}kg</div>
-                      <div className="text-xs text-indigo-600">Total Waste</div>
-                    </div>
-                  </div>
-                  
-                  <div className="text-left">
-                    <h5 className="font-medium text-indigo-800 mb-2">🏆 Top Contributors:</h5>
-                    {eventProgress.topParticipants.slice(0, 3).map((participant, index) => (
-                      <div key={index} className="flex justify-between text-sm text-indigo-700 mb-1">
-                        <span>{participant.name}</span>
-                        <span>{participant.waste}kg</span>
+              <button
+                onClick={() => setShowWasteEntry(true)}
+                className="p-4 bg-orange-100 text-orange-800 rounded-xl font-medium hover:bg-orange-200 transition-all duration-300 transform hover:scale-105 hover:shadow-lg active:scale-95"
+              >
+                <div className="text-xl mb-1">♻️</div>
+                <div className="text-sm">Log Waste</div>
+              </button>
+              
+              <button
+                onClick={() => { 
+                  setShowEventProgress(true); 
+                  loadEventProgress(eventDetails?.id || currentCheckInId); 
+                }}
+                className="p-4 bg-indigo-100 text-indigo-800 rounded-xl font-medium hover:bg-indigo-200 transition-all duration-300 transform hover:scale-105 hover:shadow-lg active:scale-95"
+              >
+                <div className="text-xl mb-1">📊</div>
+                <div className="text-sm">Event Stats</div>
+              </button>
+              
+              <button
+                onClick={resetCheckIn}
+                className="p-4 bg-blue-100 text-blue-800 rounded-xl font-medium hover:bg-blue-200 transition-all duration-300 transform hover:scale-105 hover:shadow-lg active:scale-95"
+              >
+                <div className="text-xl mb-1">➕</div>
+                <div className="text-sm">Next Event</div>
+              </button>
+            </div>
+
+            {/* Modals */}
+            {showProofUpload && (
+              <div className="bg-white p-6 rounded-xl shadow-xl border border-purple-200 animate-slideIn">
+                <h4 className="font-bold text-purple-900 mb-4 flex items-center">
+                  <span className="mr-2">📸</span>
+                  Upload Cleanup Proof
+                </h4>
+                
+                {!uploadedPhoto ? (
+                  <div>
+                    <p className="text-purple-700 mb-4">
+                      Share a before/after photo or selfie at the cleanup location!
+                    </p>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => e.target.files[0] && handlePhotoUpload(e.target.files[0])}
+                      className="w-full p-3 border-2 border-purple-300 rounded-lg text-sm focus:border-purple-500 transition-all duration-300"
+                      disabled={isUploading}
+                    />
+                    {isUploading && (
+                      <div className="mt-3 flex items-center text-purple-600">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600 mr-2"></div>
+                        Uploading photo...
                       </div>
-                    ))}
+                    )}
                   </div>
-                </div>
-              ) : (
-                <div className="text-indigo-600">Loading event stats...</div>
-              )}
-              
-              <button
-                onClick={() => setShowEventProgress(false)}
-                className="mt-3 px-3 py-1 bg-indigo-200 text-indigo-800 rounded text-sm"
-              >
-                Close
-              </button>
-            </div>
-          )}
-
-          {/* Feedback Section */}
-          {showFeedback && (
-            <div className="bg-gray-50 p-4 rounded-lg mb-4">
-              <h4 className="font-semibold mb-2">Quick Feedback (Optional)</h4>
-              <textarea
-                value={feedback}
-                onChange={(e) => setFeedback(e.target.value)}
-                placeholder="How was the event? Any suggestions?"
-                className="w-full p-2 border border-gray-300 rounded text-sm"
-                rows="3"
-              />
-              <div className="mt-2 flex gap-2">
+                ) : (
+                  <div className="text-center">
+                    <div className="text-green-600 font-bold mb-3">✅ Photo uploaded successfully!</div>
+                    <img src={uploadedPhoto} alt="Cleanup proof" className="w-full h-40 object-cover rounded-lg shadow-md" />
+                  </div>
+                )}
+                
                 <button
-                  onClick={submitFeedback}
-                  className="px-3 py-1 bg-blue-500 text-white rounded text-sm"
-                  disabled={!feedback.trim()}
+                  onClick={() => setShowProofUpload(false)}
+                  className="mt-4 w-full px-4 py-2 bg-purple-200 text-purple-800 rounded-lg font-medium hover:bg-purple-300 transition-colors duration-300"
                 >
-                  Submit Feedback
-                </button>
-                <button
-                  onClick={() => setShowFeedback(false)}
-                  className="px-3 py-1 bg-gray-300 text-gray-700 rounded text-sm"
-                >
-                  Skip
+                  Close
                 </button>
               </div>
-            </div>
-          )}
-        </div>
-      )}
+            )}
 
-      {/* Instructions */}
-      <div className="mt-6 text-xs text-gray-500 text-center">
-        💡 Scan the QR code at the event location or manually enter the Event ID shown on the QR code
+            {showWasteEntry && (
+              <div className="bg-white p-6 rounded-xl shadow-xl border border-orange-200 animate-slideIn">
+                <h4 className="font-bold text-orange-900 mb-4 flex items-center">
+                  <span className="mr-2">♻️</span>
+                  Manual Waste Entry
+                </h4>
+                <div className="bg-orange-50 p-3 rounded-lg mb-4">
+                  <p className="text-orange-700 font-medium">Current estimate: {originalWasteAmount}kg</p>
+                </div>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  placeholder="Enter actual amount (kg)"
+                  value={customWasteAmount}
+                  onChange={(e) => setCustomWasteAmount(e.target.value)}
+                  className="w-full p-3 border-2 border-orange-300 rounded-lg mb-4 focus:border-orange-500 focus:ring-2 focus:ring-orange-200 transition-all duration-300"
+                />
+                <div className="flex gap-3">
+                  <button
+                    onClick={submitCustomWaste}
+                    disabled={!customWasteAmount.trim()}
+                    className="flex-1 px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 disabled:bg-orange-300 transition-colors duration-300"
+                  >
+                    Update Amount
+                  </button>
+                  <button
+                    onClick={() => setShowWasteEntry(false)}
+                    className="px-4 py-2 bg-orange-200 text-orange-800 rounded-lg font-medium hover:bg-orange-300 transition-colors duration-300"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {showEventProgress && (
+              <div className="bg-white p-6 rounded-xl shadow-xl border border-indigo-200 animate-slideIn">
+                <h4 className="font-bold text-indigo-900 mb-4 flex items-center">
+                  <span className="mr-2">📊</span>
+                  Event Progress
+                </h4>
+                
+                {eventProgress ? (
+                  <div>
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                      <div className="text-center bg-indigo-50 p-4 rounded-lg">
+                        <div className="text-3xl font-bold text-indigo-800">{eventProgress.totalWaste}kg</div>
+                        <div className="text-indigo-600 font-medium">Total Waste</div>
+                      </div>
+                      <div className="text-center bg-indigo-50 p-4 rounded-lg">
+                        <div className="text-3xl font-bold text-indigo-800">{eventProgress.totalParticipants}</div>
+                        <div className="text-indigo-600 font-medium">Participants</div>
+                      </div>
+                    </div>
+                    
+                    <div className="text-left">
+                      <h5 className="font-bold text-indigo-800 mb-3 flex items-center">
+                        🏆 Top Contributors:
+                      </h5>
+                      <div className="space-y-2">
+                        {eventProgress.topParticipants.map((p, idx) => (
+                          <div key={idx} className="bg-indigo-100 p-3 rounded-lg flex justify-between items-center">
+                            <div className="font-medium text-indigo-800">{p.name}</div>
+                            <div className="text-indigo-600">{p.waste}kg</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-indigo-600 text-sm">Loading event stats...</div>
+                )}
+
+                <button
+                  onClick={() => setShowEventProgress(false)}
+                  className="mt-4 w-full px-4 py-2 bg-indigo-200 text-indigo-800 rounded-lg font-medium hover:bg-indigo-300 transition-colors duration-300"
+                >
+                  Close
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -311,38 +311,21 @@ const Events = ({ user }) => {
                 </div>
 
                 {/* Action Buttons */}
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => handleView(event)}
-                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm"
-                  >
-                    <Eye size={14} />
-                    View
-                  </button>
-                  
-                  <button
-                    onClick={() => handleShare(event)}
-                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors text-sm"
-                  >
-                    <Share2 size={14} />
-                    Share
-                  </button>
-                  
-                  <button
-                    onClick={() => handleEdit(event)}
-                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors text-sm"
-                  >
-                    <Edit3 size={14} />
-                    Edit
-                  </button>
-                  
-                  <button
-                    onClick={() => handleDelete(event.id)}
-                    className="flex items-center justify-center px-3 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+                <div className={`flex gap-2 ${event.status === 'cancelled' ? 'opacity-50 pointer-events-none' : ''}`}>
+  <button onClick={() => handleView(event)} className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm">
+    <Eye size={14} /> View
+  </button>
+  <button onClick={() => handleShare(event)} className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors text-sm">
+    <Share2 size={14} /> Share
+  </button>
+  <button onClick={() => handleEdit(event)} className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors text-sm">
+    <Edit3 size={14} /> Edit
+  </button>
+  <button onClick={() => handleDelete(event.id)} className="flex items-center justify-center px-3 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors">
+    <Trash2 size={14} />
+  </button>
+</div>
+
               </div>
             </div>
           );

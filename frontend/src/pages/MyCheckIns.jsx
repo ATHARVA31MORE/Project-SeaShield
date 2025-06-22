@@ -259,11 +259,13 @@ export default function MyCheckIns() {
       <div className="flex justify-between">
         <span className="text-blue-700 font-medium">Duration:</span>
         <span className="text-blue-800">
-          {checkin.eventDetails.duration ? 
-            `${checkin.eventDetails.duration} hours` : 
-            'Not specified'
-          }
-        </span>
+  {(() => {
+    const start = new Date(`${checkin.eventDetails.date}T${checkin.eventDetails.time}`);
+    const end = new Date(`${checkin.eventDetails.endDate || checkin.eventDetails.date}T${checkin.eventDetails.endTime || checkin.eventDetails.time}`);
+    const diffInHours = Math.round((end - start) / (1000 * 60 * 60));
+    return isNaN(diffInHours) ? 'Not specified' : `${diffInHours} hours`;
+  })()}
+</span>
       </div>
       <div className="flex justify-between">
         <span className="text-blue-700 font-medium">Total Participants:</span>

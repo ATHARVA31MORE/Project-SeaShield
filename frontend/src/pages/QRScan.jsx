@@ -63,7 +63,7 @@ export default function QRScan() {
   // Updated time restrictions - Only 2 hours before event
   const checkTimeRestrictions = (eventData) => {
     const now = new Date();
-    const eventDateTime = new Date(eventData.date + ' ' + eventData.time);
+    const eventDateTime = new Date(eventData.date + ' ' + eventData.time);const endDateTime = new Date(eventData.endDate + ' ' + (eventData.endTime || '23:59'));
     const eventEndTime = new Date(eventDateTime.getTime() + (eventData.duration || 4) * 60 * 60 * 1000);
     const checkInWindowStart = new Date(eventDateTime.getTime() - 2 * 60 * 60 * 1000); // 2 hours before
 
@@ -279,6 +279,15 @@ export default function QRScan() {
         setIsProcessing(false);
         return;
       }
+
+      const now = new Date();
+const eventEnd = new Date(eventData.endDate + ' ' + (eventData.endTime || '23:59'));
+if (now > eventEnd && eventData.status !== 'completed') {
+  await updateDoc(doc(db, 'events', eventId.trim()), {
+    status: 'completed'
+  });
+  eventData.status = 'completed';
+}
       
       setEventDetails(eventData);
 
@@ -497,6 +506,7 @@ export default function QRScan() {
             {/* Event Details Card */}
             {eventDetails && (
               <div className="bg-white p-6 rounded-xl shadow-lg border border-blue-100 animate-slideIn">
+                <p className="text-blue-700 mb-2">📅 {eventDetails.date} - {eventDetails.endDate} 🕒 {eventDetails.time} - {eventDetails.endTime}</p>
                 <h3 className="font-bold text-xl text-blue-900 mb-2">{eventDetails.title}</h3>
                 <p className="text-blue-700 mb-2">📍 {eventDetails.location}</p>
                 <div className="text-sm text-blue-600 bg-blue-50 p-2 rounded">

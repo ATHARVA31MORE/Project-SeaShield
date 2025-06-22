@@ -247,7 +247,10 @@ const EventViewModal = ({ event, checkins, isOpen, onClose }) => {
               <div className="space-y-2 max-h-32 overflow-y-auto">
                 {eventVolunteers.slice(0, 5).map((checkin, index) => (
                   <div key={index} className="flex items-center justify-between text-sm">
-                    <span className="text-gray-700">{checkin.userName || 'Anonymous Volunteer'}</span>
+                    <div className="flex flex-col text-gray-700">
+                        <span className="font-medium">{checkin.userName || 'Anonymous Volunteer'}</span>
+                        <span className="text-xs text-gray-500">{checkin.userEmail || 'No email'}</span>
+                    </div>
                     <span className="text-gray-500">
                       {new Date(checkin.timestamp).toLocaleDateString()}
                     </span>

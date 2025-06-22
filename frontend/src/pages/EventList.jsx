@@ -44,10 +44,14 @@ export default function EventList() {
     }
   };
 
-  const getEventStatus = (eventDate, eventTime) => {
+  const getEventStatus = (eventDate, eventTime, endDate, endTime, eventStatusField = '') => {
   const now = new Date();
   const start = new Date(`${eventDate}T${eventTime}`);
-  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000); // Add 24 hours
+  const end = new Date(`${endDate || eventDate}T${endTime || eventTime}`);
+
+  if (eventStatusField.toLowerCase() === 'cancelled') {
+    return { status: 'cancelled', color: 'text-red-700', bg: 'bg-red-100' };
+  }
 
   if (now >= start && now <= end) {
     return { status: 'ongoing', color: 'text-yellow-700', bg: 'bg-yellow-100' };
@@ -59,6 +63,7 @@ export default function EventList() {
     return { status: 'upcoming', color: 'text-blue-600', bg: 'bg-blue-100' };
   }
 };
+
 
 
   if (loading) {
@@ -81,7 +86,7 @@ export default function EventList() {
       ) : (
         <div className="grid gap-6">
           {events.map(event => {
-            const eventStatus = getEventStatus(event.date, event.time);
+            const eventStatus = getEventStatus(event.date, event.time, event.endDate, event.endTime, event.status);
             const participantCount = checkInCounts[event.id] || 0;
             
             return (
@@ -97,8 +102,20 @@ export default function EventList() {
                       <div className="flex flex-wrap gap-4 text-sm text-gray-600 mb-3">
                         <div className="flex items-center gap-1">
                           <span>📅</span>
-                          <span>{event.date}</span>
+                          <span>
+                            {event.date}
+                            {event.time && ` at ${event.time}`}
+                          </span>
                         </div>
+                        {event.endDate && (
+                          <div className="flex items-center gap-1">
+                            <span>⏳</span>
+                            <span>
+                              Ends on {event.endDate}
+                              {event.endTime && ` at ${event.endTime}`}
+                            </span>
+                          </div>
+                        )}
                         <div className="flex items-center gap-1">
                           <span>📍</span>
                           <span>{event.location}</span>
@@ -115,11 +132,12 @@ export default function EventList() {
 
                       {/* Status Badge */}
                       <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${eventStatus.bg} ${eventStatus.color}`}>
-                        {eventStatus.status === 'completed' && '✅ Completed'}
-                        {eventStatus.status === 'ongoing' && '🟡 Ongoing'}
-                        {eventStatus.status === 'today' && '🔥 Happening Today'}
-                        {eventStatus.status === 'upcoming' && '📅 Upcoming'}
-                      </span>
+                              {eventStatus.status === 'completed' && '✅ Completed'}
+                              {eventStatus.status === 'ongoing' && '🟡 Ongoing'}
+                              {eventStatus.status === 'today' && '🔥 Happening Today'}
+                              {eventStatus.status === 'upcoming' && '📅 Upcoming'}
+                              {eventStatus.status === 'cancelled' && '🚫 Cancelled'}
+                            </span>
                     </div>
                   </div>
 

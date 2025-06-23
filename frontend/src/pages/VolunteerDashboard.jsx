@@ -400,7 +400,7 @@ export default function VolunteerDashboard() {
         </div>
       </div>
       
-      <style jsx>{`
+      <style>{`
         @keyframes fade-in-down {
           from {
             opacity: 0;

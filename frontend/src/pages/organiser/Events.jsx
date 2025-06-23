@@ -1,31 +1,34 @@
 import React, { useState, useEffect } from 'react';
 import { collection, addDoc, getDocs, query, where, doc, updateDoc, writeBatch, increment, onSnapshot } from 'firebase/firestore';
 import { db } from '../../utils/firebase';
-import { Calendar, MapPin, Users, Target, Wrench, Share2, Eye, Edit3, Trash2, Plus, X } from 'lucide-react';
+import { Calendar, MapPin, Users, Target, Wrench, Share2, Eye, Edit3, Trash2, Plus, X, Clock, Award, Camera, CheckCircle, AlertCircle, Download, Filter, Search, Activity, ImageIcon } from 'lucide-react';
 import EventViewModal from './EventViewModal';
 
 const Events = ({ user }) => {
   const [modalOpen, setModalOpen] = useState(false);
   const [viewModalOpen, setViewModalOpen] = useState(false);
+  const [volunteerTrackingOpen, setVolunteerTrackingOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [events, setEvents] = useState([]);
   const [checkins, setCheckins] = useState([]);
-  const [newEvent, setNewEvent] = useState({
-  title: '',
-  date: '',
-  time: '',
-  endDate: '',
-  endTime: '',
-  gearNeeded: '',
-  location: '',
-  wasteTarget: '',
-  description: '',
-  maxVolunteers: ''
-});
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [searchTerm, setSearchTerm] = useState('');
   
+  const [newEvent, setNewEvent] = useState({
+    title: '',
+    date: '',
+    time: '',
+    endDate: '',
+    endTime: '',
+    gearNeeded: '',
+    location: '',
+    wasteTarget: '',
+    description: '',
+    maxVolunteers: ''
+  });
 
-  // Fetch events and checkins on component mount
+  // Fetch all data on component mount
   useEffect(() => {
     if (user?.uid) {
       fetchEvents();
@@ -68,34 +71,33 @@ const Events = ({ user }) => {
     
     try {
       const eventData = {
-  ...newEvent,
-  organizerId: user.uid,
-  organizerName: user.displayName || user.email,
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-  status: 'active',
-  wasteTarget: parseFloat(newEvent.wasteTarget) || 0,
-  maxVolunteers: parseInt(newEvent.maxVolunteers) || null,
-  endDate: newEvent.endDate || '',
-  endTime: newEvent.endTime || ''
-};
+        ...newEvent,
+        organizerId: user.uid,
+        organizerName: user.displayName || user.email,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        status: 'active',
+        wasteTarget: parseFloat(newEvent.wasteTarget) || 0,
+        maxVolunteers: parseInt(newEvent.maxVolunteers) || null,
+        endDate: newEvent.endDate || '',
+        endTime: newEvent.endTime || ''
+      };
 
       if (editingEvent) {
-        // Update existing event
         await updateDoc(doc(db, 'events', editingEvent.id), {
           ...eventData,
           updatedAt: new Date().toISOString()
         });
       } else {
-        // Create new event
         await addDoc(collection(db, 'events'), eventData);
       }
 
-      // Reset form and close modal
       setNewEvent({
         title: '',
         date: '',
         time: '',
+        endDate: '',
+        endTime: '',
         gearNeeded: '',
         location: '',
         wasteTarget: '',
@@ -105,7 +107,6 @@ const Events = ({ user }) => {
       setModalOpen(false);
       setEditingEvent(null);
       
-      // Refresh events
       fetchEvents();
     } catch (error) {
       console.error('Error saving event:', error);
@@ -135,6 +136,11 @@ const Events = ({ user }) => {
     setViewModalOpen(true);
   };
 
+  const handleTrackVolunteers = (event) => {
+    setSelectedEvent(event);
+    setVolunteerTrackingOpen(true);
+  };
+
   const handleShare = async (event) => {
     const formatDate = (dateString) => {
       const date = new Date(dateString);
@@ -153,15 +159,12 @@ const Events = ({ user }) => {
     };
 
     try {
-      // Check if Web Share API is supported (works on mobile devices and some desktop browsers)
       if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
         await navigator.share(shareData);
       } else {
-        // Fallback: Copy to clipboard with enhanced message
         const shareText = `${shareData.title}\n\n${shareData.text}\n\n${shareData.url}`;
         await navigator.clipboard.writeText(shareText);
         
-        // Show success message with platform-specific instructions
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         const message = isMobile 
           ? 'Event details copied to clipboard! You can now paste and share via WhatsApp, Email, SMS, or any other app.'
@@ -171,7 +174,6 @@ const Events = ({ user }) => {
       }
     } catch (error) {
       console.error('Error sharing:', error);
-      // Final fallback: show share text in alert
       const shareText = `${shareData.title}\n\n${shareData.text}`;
       const confirmed = confirm(`Share this event:\n\n${shareText}\n\nClick OK to copy to clipboard, or Cancel to dismiss.`);
       if (confirmed) {
@@ -180,7 +182,6 @@ const Events = ({ user }) => {
           alert('Copied to clipboard! You can now share via any app.');
         } catch (clipboardError) {
           console.error('Clipboard failed:', clipboardError);
-          // Show share text in a new window/tab as last resort
           const newWindow = window.open('', '_blank');
           if (newWindow) {
             newWindow.document.write(`<pre style="padding: 20px; font-family: Arial;">${shareText}</pre>`);
@@ -228,8 +229,55 @@ const Events = ({ user }) => {
     }
   };
 
+  // FIXED: Get volunteer count from checkins collection
   const getVolunteerCount = (eventId) => {
-    return [...new Set(checkins.filter(checkin => checkin.eventId === eventId).map(checkin => checkin.userId))].length;
+    const eventCheckins = checkins.filter(checkin => checkin.eventId === eventId);
+    const uniqueVolunteers = [...new Set(eventCheckins.map(checkin => checkin.userId))];
+    return uniqueVolunteers.length;
+  };
+
+  // FIXED: Get event progress from checkins collection
+  const getEventProgress = (eventId) => {
+    const eventCheckins = checkins.filter(checkin => checkin.eventId === eventId);
+    const totalWasteCollected = eventCheckins.reduce((sum, checkin) => sum + (checkin.wasteCollected || 0), 0);
+    const uniqueVolunteers = [...new Set(eventCheckins.map(checkin => checkin.userId))].length;
+    const proofPhotos = eventCheckins.filter(checkin => checkin.proofPhoto).length;
+    
+    return {
+      totalWasteCollected,
+      activeVolunteers: uniqueVolunteers,
+      proofSubmissions: proofPhotos
+    };
+  };
+
+  const formatDateTime = (timestamp) => {
+    if (!timestamp) return 'N/A';
+    
+    // Handle different timestamp formats
+    let date;
+    if (timestamp && typeof timestamp === 'object' && timestamp.toDate) {
+      // Firestore Timestamp
+      date = timestamp.toDate();
+    } else if (typeof timestamp === 'string') {
+      // ISO string
+      date = new Date(timestamp);
+    } else {
+      // Assume it's already a Date object
+      date = new Date(timestamp);
+    }
+    
+    return date.toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  const getVolunteerActivitiesForEvent = (eventId) => {
+    return checkins.filter(checkin => checkin.eventId === eventId);
   };
 
   const sortedEvents = events.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -246,13 +294,13 @@ const Events = ({ user }) => {
               title: '',
               date: '',
               time: '',
+              endDate: '',
+              endTime: '',
               gearNeeded: '',
               location: '',
               wasteTarget: '',
               description: '',
-              maxVolunteers: '',
-              endDate: '',       // ✅ Save end date
-              endTime: '',
+              maxVolunteers: ''
             });
             setModalOpen(true);
           }}
@@ -263,11 +311,15 @@ const Events = ({ user }) => {
         </button>
       </div>
 
+      {/* Debug Information - You can remove this in production */}
+      
+
       {/* Events Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {sortedEvents.map(event => {
           const { status, color, emoji } = getEventStatus(event);
           const volunteerCount = getVolunteerCount(event.id);
+          const progress = getEventProgress(event.id);
 
           return (
             <div key={event.id} className="bg-white rounded-xl shadow-lg hover:shadow-xl transition-shadow">
@@ -311,6 +363,22 @@ const Events = ({ user }) => {
                     <span className="text-sm">{volunteerCount} volunteers registered</span>
                   </div>
 
+                  {/* Progress Summary */}
+                  {progress.totalWasteCollected > 0 && (
+                    <div className="bg-green-50 p-3 rounded-lg border border-green-200">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-green-700 font-medium">Progress:</span>
+                        <span className="text-green-600">{progress.totalWasteCollected}kg collected</span>
+                      </div>
+                      {progress.proofSubmissions > 0 && (
+                        <div className="flex items-center mt-1 text-xs text-green-600">
+                          <Camera size={12} className="mr-1" />
+                          {progress.proofSubmissions} proof photos
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {event.gearNeeded && (
                     <div className="flex items-start text-gray-600">
                       <Wrench size={16} className="mr-2 text-gray-500 mt-0.5" />
@@ -320,21 +388,38 @@ const Events = ({ user }) => {
                 </div>
 
                 {/* Action Buttons */}
-                <div className={`flex gap-2 ${event.status === 'cancelled' ? 'opacity-50 pointer-events-none' : ''}`}>
-  <button onClick={() => handleView(event)} className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm">
-    <Eye size={14} /> View
-  </button>
-  <button onClick={() => handleShare(event)} className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors text-sm">
-    <Share2 size={14} /> Share
-  </button>
-  <button onClick={() => handleEdit(event)} className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors text-sm">
-    <Edit3 size={14} /> Edit
-  </button>
-  <button onClick={() => handleDelete(event.id)} className="flex items-center justify-center px-3 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors">
-    <Trash2 size={14} />
-  </button>
-</div>
-
+                <div className={`flex flex-wrap gap-2 ${event.status === 'cancelled' ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <button 
+                    onClick={() => handleView(event)} 
+                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm"
+                  >
+                    <Eye size={14} /> View
+                  </button>
+                  <button 
+                    onClick={() => handleTrackVolunteers(event)} 
+                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200 transition-colors text-sm"
+                  >
+                    <Activity size={14} /> Track
+                  </button>
+                  <button 
+                    onClick={() => handleShare(event)} 
+                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors text-sm"
+                  >
+                    <Share2 size={14} /> Share
+                  </button>
+                  <button 
+                    onClick={() => handleEdit(event)} 
+                    className="flex items-center justify-center px-3 py-2 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors"
+                  >
+                    <Edit3 size={14} />
+                  </button>
+                  <button 
+                    onClick={() => handleDelete(event.id)} 
+                    className="flex items-center justify-center px-3 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
             </div>
           );
@@ -408,26 +493,27 @@ const Events = ({ user }) => {
                     />
                   </div>
                 </div>
+
                 <div className="grid grid-cols-2 gap-4">
-  <div>
-    <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
-    <input
-      type="date"
-      value={newEvent.endDate}
-      onChange={(e) => setNewEvent({...newEvent, endDate: e.target.value})}
-      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-    />
-  </div>
-  <div>
-    <label className="block text-sm font-medium text-gray-700 mb-1">End Time</label>
-    <input
-      type="time"
-      value={newEvent.endTime}
-      onChange={(e) => setNewEvent({...newEvent, endTime: e.target.value})}
-      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-    />
-  </div>
-</div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                    <input
+                      type="date"
+                      value={newEvent.endDate}
+                      onChange={(e) => setNewEvent({...newEvent, endDate: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">End Time</label>
+                    <input
+                      type="time"
+                      value={newEvent.endTime}
+                      onChange={(e) => setNewEvent({...newEvent, endTime: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
@@ -510,18 +596,205 @@ const Events = ({ user }) => {
         </div>
       )}
 
-      {/* Event View Modal */}
-      <EventViewModal
-        event={selectedEvent}
-        checkins={checkins}
-        isOpen={viewModalOpen}
-        onClose={() => {
-          setViewModalOpen(false);
-          setSelectedEvent(null);
-        }}
-      />
+      {/* Volunteer Tracking Modal */}
+      {volunteerTrackingOpen && selectedEvent && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-2xl font-bold text-gray-900">Volunteer Tracking</h2>
+                  <p className="text-gray-600">{selectedEvent.title}</p>
+                </div>
+                <button
+                  onClick={() => setVolunteerTrackingOpen(false)}
+                  className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+                >
+                  <X size={20} className="text-gray-500" />
+                </button>
+              </div>
+
+              {/* Event Overview */}
+              <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-6 rounded-lg mb-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-blue-600">{getVolunteerCount(selectedEvent.id)}</div>
+                    <div className="text-sm text-gray-600">Registered</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-green-600">{getEventProgress(selectedEvent.id).totalWasteCollected}kg</div>
+                    <div className="text-sm text-gray-600">Waste Collected</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-purple-600">{getEventProgress(selectedEvent.id).activeVolunteers}</div>
+                    <div className="text-sm text-gray-600">Active Volunteers</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-orange-600">{getEventProgress(selectedEvent.id).proofSubmissions}</div>
+                    <div className="text-sm text-gray-600">Proof Photos</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Volunteer Activities */}
+              <div className="space-y-4">
+                <h3 className="text-xl font-semibold text-gray-900">Volunteer Activities</h3>
+                
+                {getVolunteerActivitiesForEvent(selectedEvent.id).length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <Activity size={48} className="mx-auto mb-4 text-gray-300" />
+                    <p>No volunteer activities recorded yet</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-4">
+                    {getVolunteerActivitiesForEvent(selectedEvent.id).map((activity, index) => (
+                      <div key={activity.id || index} className="bg-white p-4 rounded-lg border border-gray-200 hover:shadow-sm transition-shadow">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-3 mb-2">
+                              <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold text-sm">
+                                {activity.userName ? activity.userName.charAt(0).toUpperCase() : 'V'}
+                              </div>
+                              <div>
+                                <h4 className="font-semibold text-gray-900">
+                                  {activity.userName || 'Anonymous Volunteer'}
+                                </h4>
+                                <p className="text-sm text-gray-500">{activity.userEmail || 'No email provided'}</p>
+                              </div>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
+                              <div className="bg-green-50 p-3 rounded-lg">
+                                <div className="text-lg font-bold text-green-600">
+                                  {activity.wasteCollected || 0}kg
+                                </div>
+                                <div className="text-xs text-green-700">Waste Collected</div>
+                              </div>
+                              
+                              <div className="bg-blue-50 p-3 rounded-lg">
+                                <div className="text-lg font-bold text-blue-600">
+                                  {activity.checkInTime ? '✓' : '–'}
+                                </div>
+                                <div className="text-xs text-blue-700">Check-in Status</div>
+                              </div>
+                              
+                              <div className="bg-purple-50 p-3 rounded-lg">
+                                <div className="text-lg font-bold text-purple-600">
+                                  {activity.proofPhoto ? '📸' : '–'}
+                                </div>
+                                <div className="text-xs text-purple-700">Proof Photo</div>
+                              </div>
+                              
+                              <div className="bg-orange-50 p-3 rounded-lg">
+                                <div className="text-lg font-bold text-orange-600">
+                                  {activity.customWasteEntry ? '✏️' : '–'}
+                                </div>
+                                <div className="text-xs text-orange-700">Custom Entry</div>
+                              </div>
+                            </div>
+                            
+                            {/* Timestamps */}
+                            <div className="mt-3 space-y-1 text-xs text-gray-600">
+                              {activity.checkInTime && (
+                                <p>Check-in: {formatDateTime(activity.checkInTime)}</p>
+                              )}
+                              {activity.timestamp && (
+                                <p>Activity: {formatDateTime(activity.timestamp)}</p>
+                              )}
+                              {activity.photoUploadTime && (
+                                <p>Photo uploaded: {formatDateTime(activity.photoUploadTime)}</p>
+                              )}
+                              {activity.wasteEntryTime && (
+                                <p>Waste entry: {formatDateTime(activity.wasteEntryTime)}</p>
+                              )}
+                              {activity.lastEditTime && (
+                                <p>Last edited: {formatDateTime(activity.lastEditTime)}</p>
+                              )}
+                            </div>
+                          </div>
+                          
+                          {/* Action buttons */}
+                          <div className="flex gap-2">
+                            {activity.proofPhoto && (
+                              <button
+                                onClick={() => window.open(activity.proofPhoto, '_blank')}
+                                className="p-2 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 transition-colors"
+                                title="View proof photo"
+                              >
+                                <ImageIcon size={16} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Export Data Button */}
+              <div className="flex justify-end mt-6">
+                <button
+                  onClick={() => {
+                    const eventData = {
+                      event: selectedEvent,
+                      volunteers: getVolunteerActivitiesForEvent(selectedEvent.id),
+                      summary: getEventProgress(selectedEvent.id)
+                    };
+                    
+                    const dataStr = JSON.stringify(eventData, null, 2);
+                    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+                    const url = URL.createObjectURL(dataBlob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `${selectedEvent.title.replace(/[^a-z0-9]/gi, '_')}_volunteer_data.json`;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                >
+                  <Download size={16} />
+                  Export Data
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* View Event Modal */}
+      {viewModalOpen && selectedEvent && (
+        <EventViewModal
+          event={selectedEvent}
+          checkins={checkins}
+          isOpen={viewModalOpen}
+          onClose={() => setViewModalOpen(false)}
+        />
+      )}
     </div>
   );
 };
 
 export default Events;
+
+// Additional helper functions to fix the volunteer counting issue
+const debugVolunteerCounting = (eventId, checkins) => {
+  console.log('=== Debug Volunteer Counting ===');
+  console.log('Event ID:', eventId);
+  console.log('Total checkins:', checkins.length);
+  
+  const eventCheckins = checkins.filter(checkin => checkin.eventId === eventId);
+  console.log('Checkins for this event:', eventCheckins.length);
+  console.log('Event checkins data:', eventCheckins);
+  
+  const userIds = eventCheckins.map(checkin => checkin.userId);
+  console.log('User IDs:', userIds);
+  
+  const uniqueUserIds = [...new Set(userIds)];
+  console.log('Unique User IDs:', uniqueUserIds);
+  console.log('Unique volunteer count:', uniqueUserIds.length);
+  
+  console.log('=== End Debug ===');
+  
+  return uniqueUserIds.length;
+};

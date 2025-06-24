@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { db, storage } from '../utils/firebase';
 import { addDoc, collection, doc, getDoc, updateDoc, increment, query, where, getDocs } from 'firebase/firestore';
-import { fetchGeminiResponse } from '../utils/gemini';
-import { uploadBytes, uploadString, ref, getDownloadURL } from 'firebase/storage';
+import { fetchGeminiResponse, verifyCleanupImage, fileToBase64, getImageMimeType } from '../utils/gemini';
 import axios from 'axios';
 
 export default function QRScan() {
@@ -17,6 +16,7 @@ export default function QRScan() {
   const [motivationalMessage, setMotivationalMessage] = useState('');
   const [currentCheckInId, setCurrentCheckInId] = useState(null);
   const [eventStatus, setEventStatus] = useState('');
+  const [verificationStatus, setVerificationStatus] = useState('');
 
   // Post-checkin features
   const [showProofUpload, setShowProofUpload] = useState(false);
@@ -198,6 +198,41 @@ export default function QRScan() {
     return res.data.data.url;
   };
 
+  const verifyImageWithGemini = async (imageFile) => {
+  try {
+    // Convert image to base64
+    const base64Image = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.readAsDataURL(imageFile);
+    });
+
+    const prompt = `
+      Analyze this image for a beach/environmental cleanup event. 
+      Check if it contains:
+      - Trash, litter, or waste materials
+      - Cleanup activities (people picking up trash, cleaning)
+      - Cleanup equipment (gloves, bags, tools)
+      - Beach/environmental cleanup scenes
+      
+      Respond with only "VALID" if it's clearly related to cleanup activities, 
+      or "INVALID" if it's irrelevant (selfies, random photos, etc.).
+      Also provide a brief reason after the status.
+    `;
+
+    // You'll need to modify your fetchGeminiResponse function to handle images
+    const response = await fetchGeminiResponse(prompt, base64Image);
+    
+    return {
+      isValid: response.includes('VALID'),
+      reason: response
+    };
+  } catch (error) {
+    console.error('Image verification error:', error);
+    return { isValid: true, reason: 'Verification failed, allowing upload' };
+  }
+};
+
   // Updated time restrictions - Only 2 hours before event
   const checkTimeRestrictions = (eventData) => {
     const now = new Date();
@@ -347,6 +382,22 @@ export default function QRScan() {
         setStatus('❌ Please select a valid image file.');
         return;
       }
+
+      // Add this right after file validation (after the file type check)
+      setStatus('🔍 Verifying image content...');
+
+      // Verify image content with Gemini
+      const imageBase64 = await fileToBase64(file);
+      const verification = await verifyCleanupImage(imageBase64);
+
+      if (!verification.isValid) {
+      setStatus(`❌ Image verification failed: ${verification.reason}`);
+      setIsUploading(false);
+      return;
+      }
+
+
+      setStatus('✅ Image verified! Uploading...');
 
       // Upload to ImgBB
       const photoUrl = await uploadToImgBB(file);
@@ -890,6 +941,11 @@ export default function QRScan() {
               >
                 <div className="text-2xl mb-2">📸</div>
                 <div className="text-sm">Upload Proof</div>
+                {verificationStatus && (
+  <div className="text-center text-sm text-blue-600 mb-2">
+    {verificationStatus}
+  </div>
+)}
               </button>
 
               <button

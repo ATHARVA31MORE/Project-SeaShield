@@ -13,110 +13,117 @@ export default function VolunteerDashboard() {
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [badges, setBadges] = useState([]);
+  const [userData, setUserData] = useState(null);
 
   useEffect(() => {
-    const loadUserData = async () => {
-      try {
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-        if (userDoc.exists()) {
-          const data = userDoc.data();
+  const loadUserData = async () => {
+    try {
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (userDoc.exists()) {
+  const data = userDoc.data();
+  setUserData({
+    fullName: data.displayName || `${data.firstName || ''} ${data.lastName || ''}`.trim() || 'Eco Hero',
+    email: data.email || '',
+    ...data
+  });
 
-          const checkinsQuery = query(collection(db, 'checkins'), where('userId', '==', user.uid));
-          const checkinsSnapshot = await getDocs(checkinsQuery);
+        const checkinsQuery = query(collection(db, 'checkins'), where('userId', '==', user.uid));
+        const checkinsSnapshot = await getDocs(checkinsQuery);
 
-          let validCheckIns = 0;
-          let checkinDataList = [];
+        let validCheckIns = 0;
+        let checkinDataList = [];
 
-          for (const checkinDoc of checkinsSnapshot.docs) {
-            const checkinData = checkinDoc.data();
-            const eventSnap = await getDoc(doc(db, 'events', checkinData.eventId));
-            if (eventSnap.exists()) {
-              validCheckIns++;
-              checkinDataList.push(checkinData);
+        for (const checkinDoc of checkinsSnapshot.docs) {
+          const checkinData = checkinDoc.data();
+          const eventSnap = await getDoc(doc(db, 'events', checkinData.eventId));
+          if (eventSnap.exists()) {
+            validCheckIns++;
+            checkinDataList.push(checkinData);
+          } else {
+            await deleteDoc(checkinDoc.ref);
+          }
+        }
+
+        setEcoScore(data.ecoScore || 0);
+        setCheckInCount(validCheckIns);
+
+        let totalWaste = 0;
+        let streakCounter = 1, maxStreak = 1;
+        const sorted = [...checkinDataList].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        let lastDate = new Date(sorted[0]?.timestamp);
+
+        for (let i = 0; i < sorted.length; i++) {
+          const currDate = new Date(sorted[i].timestamp);
+          if (i > 0) {
+            const diff = (currDate - lastDate) / (1000 * 60 * 60 * 24);
+            if (diff <= 2) {
+              streakCounter++;
+              maxStreak = Math.max(maxStreak, streakCounter);
             } else {
-              await deleteDoc(checkinDoc.ref);
+              streakCounter = 1;
             }
           }
-
-          setEcoScore(data.ecoScore || 0);
-          setCheckInCount(validCheckIns);
-
-          let totalWaste = 0;
-          let streakCounter = 1, maxStreak = 1;
-          const sorted = [...checkinDataList].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-          let lastDate = new Date(sorted[0]?.timestamp);
-
-          for (let i = 0; i < sorted.length; i++) {
-            const currDate = new Date(sorted[i].timestamp);
-            if (i > 0) {
-              const diff = (currDate - lastDate) / (1000 * 60 * 60 * 24);
-              if (diff <= 2) {
-                streakCounter++;
-                maxStreak = Math.max(maxStreak, streakCounter);
-              } else {
-                streakCounter = 1;
-              }
-            }
-            lastDate = currDate;
-            totalWaste += parseFloat(sorted[i].wasteCollected || 0);
-          }
-
-          const earnedBadges = [];
-          if (validCheckIns >= 5) earnedBadges.push("🏅 5 Cleanups");
-          if (totalWaste >= 50) earnedBadges.push("🧹 50kg Cleanup Champ");
-          if (maxStreak >= 3) earnedBadges.push("🔥 3-Day Streaker");
-
-          setBadges(earnedBadges);
+          lastDate = currDate;
+          totalWaste += parseFloat(sorted[i].wasteCollected || 0);
         }
 
-        let notificationsData = [];
+        const earnedBadges = [];
+        if (validCheckIns >= 5) earnedBadges.push("🏅 5 Cleanups");
+        if (totalWaste >= 50) earnedBadges.push("🧹 50kg Cleanup Champ");
+        if (maxStreak >= 3) earnedBadges.push("🔥 3-Day Streaker");
 
-        try {
-          const notificationsQuery = query(
-            collection(db, 'notifications'),
-            where('userId', '==', user.uid),
-            orderBy('createdAt', 'desc')
-          );
-          const notificationsSnapshot = await getDocs(notificationsQuery);
-          notificationsData = notificationsSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          }));
-        } catch (orderError) {
-          console.log('OrderBy failed, trying without orderBy:', orderError);
-
-          const notificationsQuery = query(
-            collection(db, 'notifications'),
-            where('userId', '==', user.uid)
-          );
-          const notificationsSnapshot = await getDocs(notificationsQuery);
-          notificationsData = notificationsSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          }));
-
-          notificationsData.sort((a, b) => {
-            const aDate = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
-            const bDate = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
-            return bDate - aDate;
-          });
-        }
-
-        console.log('Dashboard notifications:', notificationsData);
-        setNotifications(notificationsData);
-        setUnreadCount(notificationsData.filter(notif => !notif.read).length);
-
-      } catch (e) {
-        console.error('Error loading volunteer data:', e);
-      } finally {
-        setLoading(false);
+        setBadges(earnedBadges);
       }
-    };
 
-    if (user?.uid) {
-      loadUserData();
+      let notificationsData = [];
+
+      try {
+        const notificationsQuery = query(
+          collection(db, 'notifications'),
+          where('userId', '==', user.uid),
+          orderBy('createdAt', 'desc')
+        );
+        const notificationsSnapshot = await getDocs(notificationsQuery);
+        notificationsData = notificationsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+      } catch (orderError) {
+        console.log('OrderBy failed, trying without orderBy:', orderError);
+
+        const notificationsQuery = query(
+          collection(db, 'notifications'),
+          where('userId', '==', user.uid)
+        );
+        const notificationsSnapshot = await getDocs(notificationsQuery);
+        notificationsData = notificationsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+
+        notificationsData.sort((a, b) => {
+          const aDate = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
+          const bDate = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+          return bDate - aDate;
+        });
+      }
+
+      console.log('Dashboard notifications:', notificationsData);
+      setNotifications(notificationsData);
+      setUnreadCount(notificationsData.filter(notif => !notif.read).length);
+
+    } catch (e) {
+      console.error('Error loading volunteer data:', e);
+    } finally {
+      setLoading(false);
     }
-  }, [user.uid]);
+  };
+
+  if (user?.uid) {
+    loadUserData();
+  }
+}, [user.uid]);
+
 
   if (loading) {
     return (
@@ -135,7 +142,7 @@ export default function VolunteerDashboard() {
         {/* Header Section */}
         <div className="mb-8 animate-fade-in-down">
           <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-blue-600 to-green-600 bg-clip-text text-transparent mb-2">
-            🌊 Welcome back, {user.displayName || 'Eco Hero'}!
+            🌊 Welcome back, {userData?.fullName || 'Eco Hero'}!
           </h1>
           <p className="text-gray-600 text-lg">Making waves for a cleaner tomorrow</p>
         </div>

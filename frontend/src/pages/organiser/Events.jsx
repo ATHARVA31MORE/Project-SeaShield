@@ -14,6 +14,7 @@ const Events = ({ user }) => {
   const [checkins, setCheckins] = useState([]);
   const [filterStatus, setFilterStatus] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [users, setUsers] = useState([]);
   
   const [newEvent, setNewEvent] = useState({
     title: '',
@@ -30,11 +31,22 @@ const Events = ({ user }) => {
 
   // Fetch all data on component mount
   useEffect(() => {
-    if (user?.uid) {
-      fetchEvents();
-      fetchCheckins();
-    }
-  }, [user]);
+  if (user?.uid) {
+    fetchEvents();
+    fetchCheckins();
+    fetchUsers(); // 👈 Add this line
+  }
+}, [user]);
+
+  const fetchUsers = async () => {
+  try {
+    const snapshot = await getDocs(collection(db, 'users'));
+    const usersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    setUsers(usersData);
+  } catch (error) {
+    console.error('Error fetching users:', error);
+  }
+};
 
   const fetchEvents = async () => {
     try {
@@ -277,8 +289,18 @@ const Events = ({ user }) => {
   };
 
   const getVolunteerActivitiesForEvent = (eventId) => {
-    return checkins.filter(checkin => checkin.eventId === eventId);
-  };
+  return checkins
+    .filter(checkin => checkin.eventId === eventId)
+    .map(checkin => {
+      const userInfo = users.find(u => u.uid === checkin.userId);
+      return {
+        ...checkin,
+        userName: userInfo ? `${userInfo.firstName || ''} ${userInfo.lastName || ''}`.trim() || userInfo.displayName : 'Eco Hero',
+        userEmail: userInfo?.email || checkin.userEmail,
+      };
+    });
+};
+
 
   const sortedEvents = events.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
@@ -657,8 +679,8 @@ const Events = ({ user }) => {
                               </div>
                               <div>
                                 <h4 className="font-semibold text-gray-900">
-                                  {activity.userName || 'Anonymous Volunteer'}
-                                </h4>
+  {activity.userName || activity.displayName || `${activity.firstName || ''} ${activity.lastName || ''}`.trim() || 'Eco Hero'}
+</h4>
                                 <p className="text-sm text-gray-500">{activity.userEmail || 'No email provided'}</p>
                               </div>
                             </div>

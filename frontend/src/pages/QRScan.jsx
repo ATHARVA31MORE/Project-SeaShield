@@ -333,24 +333,36 @@ export default function QRScan() {
     const checkInsSnapshot = await getDocs(checkInsQuery);
 
     let totalWaste = 0;
-    const uniqueUserIds = new Set();
+    let totalParticipants = checkInsSnapshot.size;
     const participants = [];
 
-    checkInsSnapshot.forEach((doc) => {
-      const data = doc.data();
+    for (const docSnap of checkInsSnapshot.docs) {
+      const data = docSnap.data();
       totalWaste += Number(data.wasteCollected) || 0;
-      if (data.userId) uniqueUserIds.add(data.userId);
+
+      // Fetch display name from users collection if not present
+      let name = data.userName;
+      if (!name && data.userId) {
+        const userDoc = await getDoc(doc(db, 'users', data.userId));
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          name = userData.displayName || `${userData.firstName || ''} ${userData.lastName || ''}`.trim() || 'Anonymous Volunteer';
+        } else {
+          name = 'Anonymous Volunteer';
+        }
+      }
+
       participants.push({
-        name: data.userName,
+        name,
         waste: Number(data.wasteCollected) || 0,
         timestamp: data.timestamp
       });
-    });
+    }
 
     participants.sort((a, b) => b.waste - a.waste);
 
     setEventProgress({
-      totalParticipants: uniqueUserIds.size,
+      totalParticipants,
       totalWaste: Math.round(totalWaste * 100) / 100,
       topParticipants: participants.slice(0, 5)
     });
@@ -358,6 +370,7 @@ export default function QRScan() {
     console.error('Error loading event progress:', error);
   }
 };
+
 
 
   const handlePhotoUpload = async (file) => {

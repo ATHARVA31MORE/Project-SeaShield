@@ -138,7 +138,7 @@ export default function VolunteerDashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-green-50 to-blue-100">
-      <div className="container mx-auto px-4 py-8 max-w-7xl">
+      <div className="container mx-auto px-4 pt-24 pb-8 max-w-7xl">
         {/* Header Section */}
         <div className="mb-8 animate-fade-in-down">
           <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-blue-600 to-green-600 bg-clip-text text-transparent mb-2">

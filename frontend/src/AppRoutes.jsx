@@ -17,6 +17,8 @@ import { doc, getDoc, collection, getDocs, query, where } from 'firebase/firesto
 import { db } from './utils/firebase';
 import Profile from './pages/Profile';
 import Messages from './pages/Messages';
+import GlobalLeaderboard from './components/GlobalLeaderboard';
+import VolunteerAssistant from './components/VolunteerAssistant';
 
 function AppRoutes() {
   const { user, loading } = useAuth();
@@ -138,6 +140,34 @@ function AppRoutes() {
           )
         } 
       />
+      <Route 
+  path="/leaderboard" 
+  element={
+    user && userType === 'volunteer' ? (
+      <>
+        <Navbar />
+        <GlobalLeaderboard />
+      </>
+    ) : (
+      <Navigate to="/" replace />
+    )
+  }
+/>
+<Route 
+  path="/assistant" 
+  element={
+    user && userType === 'volunteer' ? (
+      <>
+        <Navbar />
+        <VolunteerAssistant />
+      </>
+    ) : (
+      <Navigate to="/" replace />
+    )
+  }
+/>
+
+
 
       <Route 
         path="/login" 

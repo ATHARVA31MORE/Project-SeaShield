@@ -48,6 +48,14 @@ export default function QRScan() {
     notes: '',
   });
 
+  // Add these to your existing state declarations in QRScan.jsx
+
+  const [showTeamSelection, setShowTeamSelection] = useState(false);
+  const [isAssigningTeam, setIsAssigningTeam] = useState(false);
+  const [assignedTeam, setAssignedTeam] = useState(null);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [workPreference, setWorkPreference] = useState('');
+
   // Check if event is currently active (between start and end time)
   const checkEventActivityStatus = (eventData) => {
     const now = new Date();
@@ -83,6 +91,223 @@ export default function QRScan() {
       return true;
     }
   };
+
+  const assignRandomTeam = async () => {
+  setIsAssigningTeam(true);
+  setStatus('🔍 Finding teammates for you...');
+
+  const eventId = currentCheckInData?.eventId || eventDetails?.id;
+  if (!eventId || !currentCheckInId || !user?.uid) {
+    console.error("Missing eventId, currentCheckInId, or user.uid");
+    setStatus("❌ Failed to assign team – required info missing.");
+    setIsAssigningTeam(false);
+    return;
+  }
+
+  try {
+    // Fetch current user's displayName from users collection
+    const userDoc = await getDoc(doc(db, 'users', user.uid));
+    const currentUserDisplayName = userDoc.exists() 
+      ? userDoc.data().displayName || user.email?.split('@')[0] || 'Anonymous'
+      : user.email?.split('@')[0] || 'Anonymous';
+    const checkInsQuery = query(collection(db, 'checkins'), where('eventId', '==', eventId));
+    const snapshot = await getDocs(checkInsQuery);
+    const allCheckins = [];
+    const activeTeams = {}; // Teams with 2-4 members (teamAssigned: true)
+    const pendingTeams = {}; // Teams with 1 member waiting (teamAssigned: false)
+
+    snapshot.forEach(docSnap => {
+      const data = docSnap.data();
+      allCheckins.push({ id: docSnap.id, ...data });
+
+      // Track active teams (2-4 members with teamAssigned: true)
+      if (data.assignedTeam && data.teamAssigned) {
+        if (!activeTeams[data.assignedTeam]) {
+          activeTeams[data.assignedTeam] = [];
+        }
+        activeTeams[data.assignedTeam].push({ id: docSnap.id, ...data });
+      }
+      
+      // Track pending teams (1 member with teamAssigned: false)
+      if (data.assignedTeam && !data.teamAssigned) {
+        if (!pendingTeams[data.assignedTeam]) {
+          pendingTeams[data.assignedTeam] = [];
+        }
+        pendingTeams[data.assignedTeam].push({ id: docSnap.id, ...data });
+      }
+    });
+
+    // First, try to join an active team with less than 4 members
+    for (const [teamId, members] of Object.entries(activeTeams)) {
+      if (members.length < 4) {
+        await updateDoc(doc(db, 'checkins', currentCheckInId), {
+          assignedTeam: teamId,
+          teamAssigned: true,
+          workPreference: 'team',
+          userName: currentUserDisplayName
+        });
+
+        const updatedTeamMembers = [
+          ...members.map(m => ({
+            id: m.userId,
+            name: m.userName || m.userEmail?.split('@')[0] || 'Anonymous',
+            email: m.userEmail
+          })),
+          {
+            id: user.uid,
+            name: currentUserDisplayName,
+            email: user.email
+          }
+        ];
+
+        setAssignedTeam(teamId);
+        setTeamMembers(updatedTeamMembers);
+        setStatus(`✅ You've been added to an existing team of ${updatedTeamMembers.length} members!`);
+        setShowTeamSelection(false);
+
+        // Send notification to all team members
+        for (const member of updatedTeamMembers) {
+          await addDoc(collection(db, 'notifications'), {
+            userId: member.id,
+            subject: '✅ Team Updated!',
+            message: `Your team now has ${updatedTeamMembers.length} members. You're all set to collaborate!`,
+            eventName: eventDetails?.title || '',
+            organiserName: 'System',
+            createdAt: new Date(),
+            read: false
+          });
+        }
+
+        setIsAssigningTeam(false);
+        return;
+      }
+    }
+
+    // Check for pending teams with exactly 1 member (form a team of 2)
+    for (const [teamId, members] of Object.entries(pendingTeams)) {
+      if (members.length === 1) {
+        const firstMember = members[0];
+        
+        // Update first member to teamAssigned: true (activate the team)
+        await updateDoc(doc(db, 'checkins', firstMember.id), {
+          teamAssigned: true
+        });
+        
+        // Add current user to team with teamAssigned: true
+        await updateDoc(doc(db, 'checkins', currentCheckInId), {
+          assignedTeam: teamId,
+          teamAssigned: true,
+          workPreference: 'team',
+          userName: currentUserDisplayName
+        });
+
+        const teamMembers = [
+          {
+            id: firstMember.userId,
+            name: firstMember.userName || firstMember.userEmail?.split('@')[0] || 'Anonymous',
+            email: firstMember.userEmail
+          },
+          {
+            id: user.uid,
+            name: currentUserDisplayName,
+            email: user.email
+          }
+        ];
+
+        // Send notification to both team members
+        for (const member of teamMembers) {
+          await addDoc(collection(db, 'notifications'), {
+            userId: member.id,
+            subject: '✅ Your team has been formed!',
+            message: `✅ Your team has been formed with 2 members! Team ID: ${teamId}`,
+            eventName: eventDetails?.title || '',
+            organiserName: 'System',
+            createdAt: new Date(),
+            read: false
+          });
+        }
+
+        setAssignedTeam(teamId);
+        setTeamMembers(teamMembers);
+        setStatus(`✅ Your team has been formed with 2 members! Team ID: ${teamId}`);
+        setShowTeamSelection(false);
+        setIsAssigningTeam(false);
+        return;
+      }
+    }
+
+    // No existing teams to join - create a new pending team (first member)
+    const teamId = `team-${eventId}-${Date.now()}`;
+    await updateDoc(doc(db, 'checkins', currentCheckInId), {
+      workPreference: 'team',
+      assignedTeam: teamId,
+      teamAssigned: false, // First member waits for second member
+      userName: currentUserDisplayName
+    });
+
+    // Send notification to the first member
+    await addDoc(collection(db, 'notifications'), {
+      userId: user.uid,
+      subject: '🔍 Searching for teammates...',
+      message: '🔍 Searching for teammates... You\'ll be notified when your team is formed!',
+      eventName: eventDetails?.title || '',
+      organiserName: 'System',
+      createdAt: new Date(),
+      read: false
+    });
+
+    setAssignedTeam(teamId);
+    setTeamMembers([{
+      id: user.uid,
+      name: currentUserDisplayName,
+      email: user.email
+    }]);
+    setStatus("🔍 Searching for teammates...");
+    setShowTeamSelection(false);
+    setIsAssigningTeam(false);
+
+  } catch (err) {
+    console.error("Error assigning team:", err);
+    setStatus("❌ Something went wrong. Working individually instead.");
+    try {
+      await updateDoc(doc(db, 'checkins', currentCheckInId), {
+        workPreference: 'individual'
+      });
+      setWorkPreference('individual');
+    } catch (updateErr) {
+      console.error("Fallback individual update failed:", updateErr);
+    }
+  } finally {
+    setIsAssigningTeam(false);
+  }
+};
+
+  const handleTeamSelection = async (type) => {
+  setWorkPreference(type);
+  const name = user.displayName || user.email?.split('@')[0] || 'Anonymous';
+
+  try {
+    await updateDoc(doc(db, 'checkins', currentCheckInId), {
+      workPreference: type,
+      userName: name
+    });
+
+    setShowTeamSelection(false);
+    
+    if (type === 'team') {
+      setStatus('🔍 Finding teammates for you...');
+      await assignRandomTeam();
+    } else {
+      setStatus('✅ You\'ll work individually!');
+    }
+  } catch (error) {
+    console.error("Error updating work preference:", error);
+    setStatus('❌ Error updating preference. Please try again.');
+  }
+};
+
+
+
 
   // Load user's current EcoScore
   useEffect(() => {
@@ -648,8 +873,9 @@ export default function QRScan() {
       // 6. Create the check-in document
       const checkInData = {
         userId: user.uid,
-        userName: user.displayName,
+        userName: user.displayName || user.email?.split('@')[0] || 'Anonymous',
         userEmail: user.email,
+        photoURL: user.photoURL || null,
         eventId: eventId.trim(),
         eventTitle: eventData.title,
         eventLocation: eventData.location,
@@ -657,7 +883,10 @@ export default function QRScan() {
         timestamp: new Date().toISOString(),
         checkInTime: new Date(),
         lastEditTime: new Date().toISOString(),
-        canEdit: true
+        canEdit: true,
+        workPreference: '',
+        assignedTeam: '', // Use empty string instead of null
+        teamAssigned: '' // Add this flag
       };
 
       const docRef = await addDoc(collection(db, 'checkins'), checkInData);
@@ -688,6 +917,7 @@ export default function QRScan() {
       // 11. Update local state with animation
       setEcoScore(prevScore => prevScore + 10);
       setCheckInSuccess(true);
+      setShowTeamSelection(true);
       setStatus(`✅ Check-in successful! You collected ${wastePerVolunteer}kg of waste 🌊`);
 
       setIsAnimating(true);
@@ -751,6 +981,55 @@ export default function QRScan() {
     setEventActivityMessage('');
     // Keep currentCheckInId and originalWasteAmount for potential editing
   };
+
+  useEffect(() => {
+  if (
+    !eventIsActive || 
+    !currentCheckInId || 
+    workPreference !== 'team' || 
+    !eventDetails?.date || 
+    !eventDetails?.time
+  ) return;
+
+  const now = new Date();
+  const eventStart = new Date(eventDetails.date + ' ' + eventDetails.time);
+  const msUntilStart = eventStart - now;
+
+  if (msUntilStart <= 0) return; // Event already started
+
+  const timeout = setTimeout(async () => {
+    const checkInRef = doc(db, 'checkins', currentCheckInId);
+    const snap = await getDoc(checkInRef);
+    const data = snap.data();
+
+    if (
+      data.workPreference === 'team' && 
+      (!data.teamAssigned || !data.assignedTeam || data.assignedTeam === '')
+    ) {
+      await updateDoc(checkInRef, {
+        workPreference: 'individual',
+        teamAssigned: false,
+        assignedTeam: ''
+      });
+
+      await addDoc(collection(db, 'notifications'), {
+        userId: user.uid,
+        subject: '🚫 No Team Found',
+        message: 'No team was formed by the event start time. You’ll continue as an individual volunteer. Your solo efforts still count big! 💚',
+        eventName: eventDetails?.title || '',
+        organiserName: 'System',
+        createdAt: new Date(),
+        read: false
+      });
+
+      setWorkPreference('individual');
+      setStatus('😔 No team formed. You’re working individually now.');
+    }
+  }, msUntilStart); // Wait until event starts
+
+  return () => clearTimeout(timeout);
+}, [eventIsActive, currentCheckInId, eventDetails, workPreference]);
+
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-green-50 to-cyan-50 p-4">
@@ -940,6 +1219,20 @@ export default function QRScan() {
                 </div>
               </div>
             )}
+
+            {/* Team Selection Section */}
+{/* Team Selection Section */}
+{showTeamSelection && (
+        <div className="space-y-4">
+          <h2 className="text-lg font-bold">Would you like to work in a team or individually?</h2>
+          <button onClick={() => handleTeamSelection('team')} className="bg-green-500 text-white p-2 rounded-lg w-full">
+            👥 Work in Team
+          </button>
+          <button onClick={() => handleTeamSelection('individual')} className="bg-blue-500 text-white p-2 rounded-lg w-full">
+            👤 Work Individually
+          </button>
+        </div>
+      )}
 
             {/* Action Buttons */}
             <div className="grid grid-cols-2 gap-4">

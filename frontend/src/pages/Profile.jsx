@@ -381,7 +381,7 @@ export default function Profile() {
         <div className="flex justify-center gap-4">
           {checkIns.length > 0 && (
             <ImpactReportButton
-              userName={user.displayName}
+              userName={user.displayName || 'Volunteer'}
               ecoScore={ecoScore}
               totalWasteCollected={totalWasteCollected}
               checkIns={checkIns}

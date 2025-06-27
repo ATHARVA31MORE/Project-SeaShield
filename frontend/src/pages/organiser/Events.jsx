@@ -15,6 +15,7 @@ const Events = ({ user }) => {
   const [filterStatus, setFilterStatus] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [users, setUsers] = useState([]);
+  const [teamTrackingOpen, setTeamTrackingOpen] = useState(false);
   
   const [newEvent, setNewEvent] = useState({
     title: '',
@@ -152,6 +153,11 @@ const Events = ({ user }) => {
     setSelectedEvent(event);
     setVolunteerTrackingOpen(true);
   };
+  const handleTrackTeams = (event) => {
+  setSelectedEvent(event);
+  setTeamTrackingOpen(true);
+};
+
 
   const handleShare = async (event) => {
     const formatDate = (dateString) => {
@@ -423,6 +429,14 @@ const Events = ({ user }) => {
                   >
                     <Activity size={14} /> Track
                   </button>
+
+                  <button 
+                    onClick={() => handleTrackTeams(event)} 
+                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 transition-colors text-sm"
+                  >
+                    <Users size={14} /> Team Track
+                  </button>
+
                   <button 
                     onClick={() => handleShare(event)} 
                     className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors text-sm"
@@ -670,7 +684,7 @@ const Events = ({ user }) => {
                 ) : (
                   <div className="grid gap-4">
                     {getVolunteerActivitiesForEvent(selectedEvent.id).map((activity, index) => (
-                      <div key={activity.id || index} className="bg-white p-4 rounded-lg border border-gray-200 hover:shadow-sm transition-shadow">
+                      <div key={activity.id || index} className="bg-white p-4 rounded-xl border border-gray-300 shadow-md hover:shadow-lg transition-shadow">
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
                             <div className="flex items-center gap-3 mb-2">
@@ -783,6 +797,143 @@ const Events = ({ user }) => {
           </div>
         </div>
       )}
+
+     {teamTrackingOpen && selectedEvent && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+      <div className="p-6">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Team Tracking</h2>
+            <p className="text-gray-600">{selectedEvent.title}</p>
+          </div>
+          <button
+            onClick={() => setTeamTrackingOpen(false)}
+            className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+          >
+            <X size={20} className="text-gray-500" />
+          </button>
+        </div>
+
+        {/* TEAM DISPLAY */}
+        {selectedEvent ? (() => {
+          const teams = {};
+          checkins
+            .filter(c => c.eventId === selectedEvent.id && c.teamAssigned && c.assignedTeam)
+            .forEach(c => {
+              if (!teams[c.assignedTeam]) teams[c.assignedTeam] = [];
+              teams[c.assignedTeam].push(c);
+            });
+
+          if (Object.keys(teams).length === 0) {
+            return (
+              <div className="text-center py-8 text-gray-500">
+                <Users size={48} className="mx-auto mb-4 text-gray-300" />
+                <p>No teams assigned yet for this event.</p>
+              </div>
+            );
+          }
+
+          return Object.entries(teams).map(([teamId, members]) => (
+            <div key={teamId} className="mb-6 border border-gray-300 rounded-xl p-4 shadow-md hover:shadow-lg transition-shadow">
+              <h3 className="text-lg font-semibold text-blue-700 mb-2">Team ID: {teamId}</h3>
+              <div className="grid gap-4">
+  {members.map((member, index) => {
+    const userInfo = users.find(u => u.uid === member.userId);
+    const name = userInfo?.displayName || member.userName || 'Eco Hero';
+    const email = member.userEmail || userInfo?.email || 'No email';
+    const avatar = name.charAt(0).toUpperCase();
+
+    return (
+      <div key={member.id || index} className="bg-white p-4 rounded-lg border border-gray-200 hover:shadow-sm transition-shadow">
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold text-sm">
+                {avatar}
+              </div>
+              <div>
+                <h4 className="font-semibold text-gray-900">{name}</h4>
+                <p className="text-sm text-gray-500">{email}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
+              <div className="bg-green-50 p-3 rounded-lg">
+                <div className="text-lg font-bold text-green-600">
+                  {member.wasteCollected || 0}kg
+                </div>
+                <div className="text-xs text-green-700">Waste Collected</div>
+              </div>
+
+              <div className="bg-blue-50 p-3 rounded-lg">
+                <div className="text-lg font-bold text-blue-600">
+                  {member.checkInTime ? '✓' : '–'}
+                </div>
+                <div className="text-xs text-blue-700">Check-in Status</div>
+              </div>
+
+              <div className="bg-purple-50 p-3 rounded-lg">
+                <div className="text-lg font-bold text-purple-600">
+                  {member.proofPhoto ? '📸' : '–'}
+                </div>
+                <div className="text-xs text-purple-700">Proof Photo</div>
+              </div>
+
+              <div className="bg-orange-50 p-3 rounded-lg">
+                <div className="text-lg font-bold text-orange-600">
+                  {member.customWasteEntry ? '✏️' : '–'}
+                </div>
+                <div className="text-xs text-orange-700">Custom Entry</div>
+              </div>
+            </div>
+
+            <div className="mt-3 space-y-1 text-xs text-gray-600">
+              {member.checkInTime && (
+                <p>Check-in: {formatDateTime(member.checkInTime)}</p>
+              )}
+              {member.timestamp && (
+                <p>Activity: {formatDateTime(member.timestamp)}</p>
+              )}
+              {member.photoUploadTime && (
+                <p>Photo uploaded: {formatDateTime(member.photoUploadTime)}</p>
+              )}
+              {member.wasteEntryTime && (
+                <p>Waste entry: {formatDateTime(member.wasteEntryTime)}</p>
+              )}
+              {member.lastEditTime && (
+                <p>Last edited: {formatDateTime(member.lastEditTime)}</p>
+              )}
+            </div>
+          </div>
+
+          {member.proofPhoto && (
+            <div className="flex gap-2 ml-2 mt-2">
+              <button
+                onClick={() => window.open(member.proofPhoto, '_blank')}
+                className="p-2 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 transition-colors"
+                title="View proof photo"
+              >
+                <ImageIcon size={16} />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  })}
+</div>
+
+            </div>
+          ));
+        })() : null}
+      </div>
+    </div>
+  </div>
+)}
+
+
+
 
       {/* View Event Modal */}
       {viewModalOpen && selectedEvent && (

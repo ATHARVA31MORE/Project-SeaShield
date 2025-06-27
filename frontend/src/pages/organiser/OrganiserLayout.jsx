@@ -1,9 +1,11 @@
 import React from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { Zap, BarChart3, Calendar, TrendingUp, MessageSquare, Bot, LogOut, User } from 'lucide-react';
-import { auth } from '../../utils/firebase';
+import { auth, db } from '../../utils/firebase';
 import { signOut } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
+import { doc, getDoc } from 'firebase/firestore';
+import { useEffect, useState } from 'react';
 
 const TabButton = ({ to, label, icon: Icon, badge, end }) => (
   <NavLink
@@ -31,9 +33,26 @@ const TabButton = ({ to, label, icon: Icon, badge, end }) => (
 
 
 const OrganiserLayout = () => {
+  const [organizerName, setOrganizerName] = useState('');
   const location = useLocation();
   const navigate = useNavigate();
   const user = auth.currentUser;
+
+  useEffect(() => {
+  const fetchOrganizerName = async () => {
+    if (auth.currentUser?.uid) {
+      const docRef = doc(db, 'users', auth.currentUser.uid);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        setOrganizerName(docSnap.data().displayName || 'Organizer');
+      } else {
+        setOrganizerName('Organizer');
+      }
+    }
+  };
+
+  fetchOrganizerName();
+}, []);
 
   const handleLogout = async () => {
     try {
@@ -75,9 +94,9 @@ const OrganiserLayout = () => {
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2 text-gray-600">
                 <User size={16} />
-                <span className="text-sm font-medium">
-                  {user?.displayName || user?.email || 'Organizer'}
-                </span>
+                <span className="text-sm font-medium capitalize">
+  {organizerName}
+</span>
               </div>
               <button
                 onClick={handleLogout}
